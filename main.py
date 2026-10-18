@@ -1,20 +1,10 @@
 """
-🐄 Bovine SNP Platform v6.0 (Version Complète et Intégrale)
-Pipeline complet de bioinformatique pour puces SNP bovines.
-Toutes les fonctionnalités : Axiom, QC, Outliers, LD, Structure, Admixture, 
-Démographie, Sélection, Phylogénie, GWAS, Post-GWAS, GBLUP, Annotation, Export, IA.
+🐄 Bovine SNP Platform v6.1 (Version Complète et Intégrale Corrigée)
 """
-
-import gzip
-import io
-import json
-import os
-import warnings
-import zipfile
+import gzip, io, json, os, warnings, zipfile
 from collections import Counter
 from datetime import datetime
 from io import BytesIO
-
 import numpy as np
 import pandas as pd
 import plotly.express as px
@@ -29,280 +19,88 @@ from sklearn.manifold import MDS as SklearnMDS
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
-# ============================================================
-# CONFIGURATION
-# ============================================================
-st.set_page_config(
-    page_title="🐄 Bovine SNP Platform v6.0",
-    page_icon="🐄",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
+st.set_page_config(page_title="🐄 Bovine SNP Platform v6.1", page_icon="🐄", layout="wide", initial_sidebar_state="expanded")
 
-DEFAULT_THRESHOLDS = {
-    "geno": 0.05, "mind": 0.05, "maf": 0.05, "hwe": 1e-6, "het_sd": 3.0,
-    "king_cutoff": 0.354, "ld_r2": 0.2,
-}
-
+DEFAULT_THRESHOLDS = {"geno": 0.05, "mind": 0.05, "maf": 0.05, "hwe": 1e-6, "het_sd": 3.0, "king_cutoff": 0.354, "ld_r2": 0.2}
 HWE_EXACT_MAX_SNP = 20_000
-
-ARS_UCD12_LENGTHS = {
-    "1": 158_534_110, "2": 136_231_102, "3": 121_005_158, "4": 120_000_166,
-    "5": 120_089_699, "6": 117_806_340, "7": 110_682_743, "8": 113_384_748,
-    "9": 105_708_134, "10": 103_308_737, "11": 107_310_763, "12": 91_163_125,
-    "13": 84_246_514, "14": 84_648_346, "15": 85_207_080, "16": 81_726_628,
-    "17": 75_176_999, "18": 66_059_976, "19": 64_089_169, "20": 72_042_983,
-    "21": 71_599_096, "22": 61_416_492, "23": 52_531_573, "24": 62_384_193,
-    "25": 42_959_610, "26": 51_680_158, "27": 46_772_073, "28": 46_333_854,
-    "29": 51_319_414, "X": 139_009_144, "Y": 50_927_933, "MT": 16_338,
-}
+ARS_UCD12_LENGTHS = {"1": 158_534_110, "2": 136_231_102, "3": 121_005_158, "4": 120_000_166, "5": 120_089_699, "6": 117_806_340, "7": 110_682_743, "8": 113_384_748, "9": 105_708_134, "10": 103_308_737, "11": 107_310_763, "12": 91_163_125, "13": 84_246_514, "14": 84_648_346, "15": 85_207_080, "16": 81_726_628, "17": 75_176_999, "18": 66_059_976, "19": 64_089_169, "20": 72_042_983, "21": 71_599_096, "22": 61_416_492, "23": 52_531_573, "24": 62_384_193, "25": 42_959_610, "26": 51_680_158, "27": 46_772_073, "28": 46_333_854, "29": 51_319_414, "X": 139_009_144, "Y": 50_927_933, "MT": 16_338}
 BOVINE_AUTOSOMES = [str(i) for i in range(1, 30)]
 
-# ============================================================
-# CACHE STREAMLIT
-# ============================================================
 def _hash_ndarray(x):
-    if not isinstance(x, np.ndarray) or x.size == 0:
-        return "empty"
-    if x.dtype.kind in ("U", "S", "O"):
-        preview = "|".join(map(str, x.ravel()[:2000]))
-        return f"strarr|{x.shape}|{preview}"
-    return (f"{x.shape}|{x.dtype}|{float(np.nansum(x))}|"
-            f"{float(np.nansum(np.abs(x)))}|{float(np.nansum(x * x))}")
+    if not isinstance(x, np.ndarray) or x.size == 0: return "empty"
+    if x.dtype.kind in ("U", "S", "O"): return f"strarr|{x.shape}|{'|'.join(map(str, x.ravel()[:2000]))}"
+    return f"{x.shape}|{x.dtype}|{float(np.nansum(x))}|{float(np.nansum(np.abs(x)))}|{float(np.nansum(x * x))}"
 
 def _hash_any(x):
-    try:
-        return _hash_ndarray(np.asarray(x))
-    except Exception:
-        try:
-            return f"{type(x).__name__}|{len(x)}"
-        except Exception:
-            return type(x).__name__
+    try: return _hash_ndarray(np.asarray(x))
+    except: return f"{type(x).__name__}|{len(x)}"
 
 HASH_FUNCS = {np.ndarray: _hash_ndarray, pd.Series: _hash_any, pd.Index: _hash_any}
-for _name in ("ArrowStringArray", "StringArray", "IntegerArray", "FloatingArray",
-              "BooleanArray", "NumpyExtensionArray", "PandasArray", "DatetimeArray",
-              "TimedeltaArray", "PeriodArray", "IntervalArray", "Categorical"):
-    _cls = getattr(pd.arrays, _name, None)
-    if _cls is None:
-        try:
-            _cls = getattr(pd.core.arrays, _name, None)
-        except Exception:
-            _cls = None
-    if _cls is not None:
-        HASH_FUNCS[_cls] = _hash_any
+for _name in ("ArrowStringArray", "StringArray", "IntegerArray", "FloatingArray", "BooleanArray", "NumpyExtensionArray", "PandasArray", "DatetimeArray", "TimedeltaArray", "PeriodArray", "IntervalArray", "Categorical"):
+    _cls = getattr(pd.arrays, _name, None) or getattr(pd.core.arrays, _name, None)
+    if _cls: HASH_FUNCS[_cls] = _hash_any
 
 def cache_data(func=None, **kw):
-    def _decorate(f):
-        return st.cache_data(show_spinner=False, hash_funcs=HASH_FUNCS, **kw)(f)
-    if func is None:
-        return _decorate
-    return _decorate(func)
+    def _decorate(f): return st.cache_data(show_spinner=False, hash_funcs=HASH_FUNCS, **kw)(f)
+    return _decorate if func is None else _decorate(func)
 
-# ============================================================
-# UTILITAIRES
-# ============================================================
 def impute_mean(gt):
-    gt2 = gt.astype(np.float32, copy=True)
-    col_mean = np.nanmean(gt2, axis=0)
-    col_mean = np.where(np.isnan(col_mean), 0.0, col_mean)
+    gt2 = gt.astype(np.float32, copy=True); col_mean = np.nanmean(gt2, axis=0); col_mean = np.where(np.isnan(col_mean), 0.0, col_mean)
     nan_mask = np.isnan(gt2)
-    if not nan_mask.any():
-        return gt2
-    gt2[nan_mask] = np.take(col_mean, np.where(nan_mask)[1])
+    if nan_mask.any(): gt2[nan_mask] = np.take(col_mean, np.where(nan_mask)[1])
     return gt2
 
-def _autosome_weights():
-    lens = np.array([ARS_UCD12_LENGTHS[c] for c in BOVINE_AUTOSOMES], dtype=float)
-    return lens / lens.sum()
-
+def _autosome_weights(): return np.array([ARS_UCD12_LENGTHS[c] for c in BOVINE_AUTOSOMES], dtype=float) / sum(ARS_UCD12_LENGTHS.values())
 def _chr_sort_key(chrom):
     s = str(chrom).upper().replace("CHR", "").replace("CHROMOSOME", "")
-    if s.isdigit():
-        return (0, int(s), "")
+    if s.isdigit(): return (0, int(s), "")
     special = {"X": 100, "Y": 101, "MT": 102, "M": 102}
-    if s in special:
-        return (1, special[s], "")
-    return (2, 0, s)
+    return (1, special[s], "") if s in special else (2, 0, s)
 
 def _detect_encoding(raw):
-    if len(raw) >= 2 and raw[:2] == b"\x1f\x8b":
-        return "gzip"
-    if len(raw) >= 2 and raw[:2] == b"\x6c\x1b":
-        return "plink_binary"
+    if len(raw) >= 2 and raw[:2] == b"\x1f\x8b": return "gzip"
+    if len(raw) >= 2 and raw[:2] == b"\x6c\x1b": return "plink_binary"
     return "text"
 
 def step_header(numero, titre, ce_qu_on_fait, pourquoi, attendu):
     with st.expander(f"📖 **Étape {numero} — {titre}**", expanded=False):
-        st.markdown(f"**🎯 Ce qu'on fait :** {ce_qu_on_fait}")
-        st.markdown(f"**❓ Pourquoi :** {pourquoi}")
-        st.markdown(f"**✅ Ce qu'on attend :** {attendu}")
+        st.markdown(f"**🎯 Ce qu'on fait :** {ce_qu_on_fait}\n**❓ Pourquoi :** {pourquoi}\n**✅ Ce qu'on attend :** {attendu}")
 
-# ============================================================
-# CONVERTISSEUR AXIOM → PED
-# ============================================================
+# --- PARSING & CONVERSION ---
 def sample_to_fid_iid(sample_name, fid_parts=2):
     name = str(sample_name).strip()
     for ext in (".CEL", ".cel", ".TXT", ".txt", ".gz", ".GZ"):
-        if name.endswith(ext):
-            name = name[:-len(ext)]
-    name = (name.replace("(", "_").replace(")", "")
-                .replace("[", "_").replace("]", "")
-                .replace(" ", "_").replace("/", "_"))
-    while "__" in name:
-        name = name.replace("__", "_")
-    name = name.strip("_")
-    parts = name.split("_")
-    fid = "_".join(parts[:fid_parts]) if len(parts) >= fid_parts else parts[0]
-    return fid, name
+        if name.endswith(ext): name = name[:-len(ext)]
+    name = name.replace("(", "_").replace(")", "").replace("[", "_").replace("]", "").replace(" ", "_").replace("/", "_")
+    while "__" in name: name = name.replace("__", "_")
+    parts = name.strip("_").split("_")
+    return ("_".join(parts[:fid_parts]) if len(parts) >= fid_parts else parts[0]), name
 
 def _clean_allele(a):
-    if a is None:
-        return "0"
-    a = str(a).strip()
-    if a in ("", ".", "-", "NA", "nan", "None", "0", "00"):
-        return "0"
-    return a
+    a = str(a).strip() if a is not None else "0"
+    return "0" if a in ("", ".", "-", "NA", "nan", "None", "0", "00") else a
 
 def parse_raw_axiom_file(raw_bytes, filename=""):
-    if (filename.endswith(".gz") or (len(raw_bytes) >= 2 and raw_bytes[:2] == b"\x1f\x8b")):
-        try:
-            raw = gzip.decompress(raw_bytes)
-        except Exception as e:
-            raise ValueError(f"Fichier .gz corrompu : {e}")
-    else:
-        raw = raw_bytes
-
-    text = raw.decode("utf-8", errors="replace")
-    lines = [l.rstrip("\r\n") for l in text.splitlines()]
-    lines = [l for l in lines if l.strip()]
-    if not lines:
-        raise ValueError("Fichier vide.")
-
-    first = lines[0]
-    is_header = (first.startswith("#") or first.startswith("Sample") or "Sample Filename" in first[:50])
-    start = 1 if is_header else 0
-
+    raw = gzip.decompress(raw_bytes) if filename.endswith(".gz") or raw_bytes[:2] == b"\x1f\x8b" else raw_bytes
+    lines = [l.rstrip("\r\n") for l in raw.decode("utf-8", errors="replace").splitlines() if l.strip()]
+    if not lines: raise ValueError("Fichier vide.")
+    start = 1 if (lines[0].startswith("#") or lines[0].startswith("Sample") or "Sample Filename" in lines[0][:50]) else 0
     samples, geno_rows = [], []
     for line in lines[start:]:
-        parts = line.split("\t")
-        if len(parts) < 2:
-            parts = line.split()
-            if len(parts) < 2:
-                continue
-        sample_name = parts[0].strip()
-        cells = [c.strip() for c in parts[1:]]
-        alleles = []
-        for cell in cells:
+        parts = line.split("\t") if "\t" in line else line.split()
+        if len(parts) < 2: continue
+        samples.append(parts[0].strip()); alleles = []
+        for cell in parts[1:]:
             toks = cell.split()
-            if len(toks) == 2:
-                alleles.append((_clean_allele(toks[0]), _clean_allele(toks[1])))
-            elif len(toks) == 1:
-                s = toks[0]
-                if len(s) == 2 and all(ch in "ACGT0" for ch in s):
-                    alleles.append((s[0], s[1]))
-                else:
-                    alleles.append((_clean_allele(s), _clean_allele(s)))
-            else:
-                alleles.append(("0", "0"))
-        samples.append(sample_name)
+            if len(toks) == 2: alleles.append((_clean_allele(toks[0]), _clean_allele(toks[1])))
+            elif len(toks) == 1 and len(toks[0]) == 2 and all(ch in "ACGT0" for ch in toks[0]): alleles.append((toks[0][0], toks[0][1]))
+            else: alleles.append(("0", "0"))
         geno_rows.append(alleles)
-
-    if not samples:
-        raise ValueError("Aucun échantillon trouvé dans le fichier.")
-
-    counts = [len(r) for r in geno_rows]
-    common = Counter(counts).most_common(1)[0][0]
-    for i, r in enumerate(geno_rows):
-        if len(r) > common:
-            geno_rows[i] = r[:common]
-        elif len(r) < common:
-            geno_rows[i] = r + [("0", "0")] * (common - len(r))
-
+    if not samples: raise ValueError("Aucun échantillon.")
+    common = Counter([len(r) for r in geno_rows]).most_common(1)[0][0]
+    for i, r in enumerate(geno_rows): geno_rows[i] = r[:common] + [("0", "0")] * (common - len(r))
     return samples, geno_rows, common
 
-def build_ped_map_from_raw(samples, geno_rows, fid_parts=2):
-    n_ind = len(samples)
-    n_snp = len(geno_rows[0]) if n_ind else 0
-    map_lines = [f"1\tSNP_{i+1:06d}\t0\t{i+1}" for i in range(n_snp)]
-    map_text = "\n".join(map_lines) + "\n"
-
-    ped_lines = []
-    for i, sample in enumerate(samples):
-        fid, iid = sample_to_fid_iid(sample, fid_parts=fid_parts)
-        cols = [fid, iid, "0", "0", "0", "-9"]
-        for a1, a2 in geno_rows[i]:
-            cols.append(a1)
-            cols.append(a2)
-        ped_lines.append("\t".join(cols))
-    return "\n".join(ped_lines) + "\n", map_text, n_snp
-
-def preview_ped_dataframe(samples, geno_rows, max_rows=10, max_snp=20):
-    rows = []
-    n_snp = len(geno_rows[0]) if geno_rows else 0
-    n_show = min(max_snp, n_snp)
-    for sample, alleles in zip(samples[:max_rows], geno_rows[:max_rows]):
-        fid, iid = sample_to_fid_iid(sample)
-        row = {"FID": fid, "IID": iid, "PID": 0, "MID": 0, "Sex": 0, "Pheno": -9}
-        for j in range(n_show):
-            a1, a2 = alleles[j]
-            row[f"SNP_{j+1:05d}_A1"] = a1
-            row[f"SNP_{j+1:05d}_A2"] = a2
-        rows.append(row)
-    return pd.DataFrame(rows)
-
-def render_axiom_converter_page():
-    st.header("🔄 Convertisseur Axiom → PED")
-    st.markdown("Transforme un fichier brut de génotypage Axiom/Thermo Fisher en fichiers **PED** et **MAP**.")
-    st.divider()
-    raw_f = st.file_uploader("Fichier brut Axiom (.ped, .txt, .tsv, .csv, .gz)", type=["ped", "txt", "tsv", "csv", "gz"], key="conv_raw_file")
-    c1, c2 = st.columns(2)
-    fid_parts = c1.number_input("Nombre de parties du nom pour le FID", min_value=1, max_value=5, value=2, step=1, key="conv_fid_parts")
-    sep_out = c2.selectbox("Séparateur en sortie", ["Tabulation (PLINK standard)", "Espace"], key="conv_sep")
-
-    if raw_f is not None:
-        if st.button("🔄 Convertir", type="primary", use_container_width=True, key="conv_btn_run"):
-            try:
-                with st.spinner("Parsing du fichier brut..."):
-                    samples, geno_rows, n_snp = parse_raw_axiom_file(raw_f.read(), raw_f.name)
-                with st.spinner("Génération PED + MAP..."):
-                    ped_text, map_text, _ = build_ped_map_from_raw(samples, geno_rows, fid_parts=int(fid_parts))
-                if sep_out.startswith("Espace"):
-                    ped_text, map_text = ped_text.replace("\t", " "), map_text.replace("\t", " ")
-                st.session_state.update({"_conv_samples": samples, "_conv_geno": geno_rows, "_conv_n_snp": n_snp, "_conv_ped": ped_text, "_conv_map": map_text})
-                st.success(f"✅ {len(samples)} individus × {n_snp} SNPs convertis.")
-            except Exception as e:
-                st.error(f"❌ {e}")
-                import traceback
-                st.code(traceback.format_exc())
-
-    if st.session_state.get("_conv_ped"):
-        samples = st.session_state["_conv_samples"]
-        geno_rows = st.session_state["_conv_geno"]
-        n_snp = st.session_state["_conv_n_snp"]
-        ped_text = st.session_state["_conv_ped"]
-        map_text = st.session_state["_conv_map"]
-
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Individus", len(samples)); c2.metric("SNPs", n_snp); c3.metric("Colonnes PED", 6 + 2 * n_snp)
-        st.subheader("👁️ Aperçu (10 lignes × 20 SNPs)")
-        st.dataframe(preview_ped_dataframe(samples, geno_rows), use_container_width=True, key="conv_df_preview")
-        with st.expander("📄 Aperçu brut PED (5 lignes)"): st.code("\n".join(ped_text.splitlines()[:5]), language="text")
-        with st.expander("📄 Aperçu MAP (10 premières lignes)"): st.code("\n".join(map_text.splitlines()[:10]), language="text")
-
-        st.subheader("💾 Téléchargement")
-        c1, c2, c3 = st.columns(3)
-        with c1: st.download_button("⬇ Fichier .ped", data=ped_text.encode("utf-8"), file_name="converted.ped", mime="text/plain", use_container_width=True, key="conv_dl_ped")
-        with c2: st.download_button("⬇ Fichier .map", data=map_text.encode("utf-8"), file_name="converted.map", mime="text/plain", use_container_width=True, key="conv_dl_map")
-        with c3:
-            bio = BytesIO()
-            with zipfile.ZipFile(bio, "w", zipfile.ZIP_DEFLATED) as zf:
-                zf.writestr("converted.ped", ped_text); zf.writestr("converted.map", map_text)
-            st.download_button("⬇ .zip (PED + MAP)", data=bio.getvalue(), file_name="converted_ped_map.zip", mime="application/zip", use_container_width=True, key="conv_dl_zip")
-
-# ============================================================
-# PARSING MAP, PED, VCF & DEMO
-# ============================================================
 def parse_map(map_bytes):
     enc = _detect_encoding(map_bytes)
     if enc == "gzip":
@@ -311,23 +109,19 @@ def parse_map(map_bytes):
     elif enc == "plink_binary": raise ValueError("❌ Le fichier .map est en binaire PLINK.")
     else: text = map_bytes.decode("utf-8", errors="replace")
 
-    rows, rejected = [], 0
+    rows = []
     for line in text.splitlines():
         line = line.strip()
         if not line: continue
         parts = line.split()
-        if len(parts) < 4:
-            rejected += 1
-            continue
+        if len(parts) < 4: continue
         try: cm = float(parts[2]) if parts[2] not in ("0", ".", "NA") else 0.0
         except ValueError: cm = 0.0
         try: bp = int(float(parts[3]))
-        except (ValueError, TypeError):
-            rejected += 1
-            continue
+        except (ValueError, TypeError): continue
         rows.append({"CHR": str(parts[0]), "SNP": parts[1], "CM": cm, "BP": bp})
     if not rows: raise ValueError("Fichier .map vide ou invalide.")
-    return pd.DataFrame(rows), rejected
+    return pd.DataFrame(rows)
 
 def parse_ped(ped_bytes, n_snp_map):
     enc = _detect_encoding(ped_bytes)
@@ -339,316 +133,152 @@ def parse_ped(ped_bytes, n_snp_map):
 
     lines = [l.strip() for l in text.splitlines() if l.strip()]
     if not lines: raise ValueError("Fichier .ped vide.")
+    
     n_cols_first = len(lines[0].split())
     n_snp_ped = max(0, (n_cols_first - 6) // 2)
+    
     if n_cols_first < 7: raise ValueError(f"❌ Format PED invalide : {n_cols_first} colonnes.")
-    if 0 < n_snp_ped < 10 and len(lines) > 100: raise ValueError("⚠️ Fichier probablement transposé.")
+    if 0 < n_snp_ped < 10 and len(lines) > 100: raise ValueError("⚠️ Fichier probablement transposé. Les SNPs doivent être en colonnes.")
 
-    n_snp_eff = min(n_snp_map, n_snp_ped) if n_snp_ped != n_snp_map and n_snp_ped > 0 else n_snp_map
+    # CORRECTION : On utilise le nombre de SNPs du fichier PED comme référence absolue
+    n_snp_eff = n_snp_ped 
     expected_cols_eff = 6 + 2 * n_snp_eff
     fids, iids, geno_rows = [], [], []
 
     for line in lines:
         parts = line.split()
-        if len(parts) < 7: continue
         if len(parts) < expected_cols_eff: continue
         fids.append(parts[0]); iids.append(parts[1]); geno_rows.append(parts[6:6 + 2 * n_snp_eff])
 
     n_ind = len(iids)
-    if n_ind == 0: raise ValueError(f"❌ Aucun individu chargé. Colonnes attendues : {expected_cols_eff}")
+    if n_ind == 0: 
+        raise ValueError(f"❌ Aucun individu chargé. Le fichier a {n_cols_first} colonnes, mais {expected_cols_eff} sont attendues. Vérifiez que le fichier n'est pas transposé ou séparé par des espaces au lieu de tabulations.")
 
     allele_counts = [Counter() for _ in range(n_snp_eff)]
     for row in geno_rows:
         for j in range(n_snp_eff):
-            a1, a2 = row[2 * j], row[2 * j + 1]
-            if a1 == "0" or a2 == "0": continue
-            allele_counts[j][a1] += 1; allele_counts[j][a2] += 1
-
+            if row[2*j] != "0" and row[2*j+1] != "0": allele_counts[j].update([row[2*j], row[2*j+1]])
+            
     minor = [min(c, key=c.get) if len(c) >= 2 else None for c in allele_counts]
     gt = np.full((n_ind, n_snp_eff), np.nan, dtype=np.float32)
+    
     for i, row in enumerate(geno_rows):
         for j in range(n_snp_eff):
-            m = minor[j]
-            if m is None: continue
-            a1, a2 = row[2 * j], row[2 * j + 1]
-            if a1 == "0" or a2 == "0": continue
-            gt[i, j] = (1 if a1 == m else 0) + (1 if a2 == m else 0)
-
-    ind_df = pd.DataFrame({"FID": fids, "IID": iids})
-    return gt, ind_df, 0
+            if minor[j] and row[2*j] != "0" and row[2*j+1] != "0": 
+                gt[i, j] = (row[2*j] == minor[j]) + (row[2*j+1] == minor[j])
+                
+    return gt, pd.DataFrame({"FID": fids, "IID": iids})
 
 def parse_vcf(vcf_bytes):
-    is_gz = len(vcf_bytes) >= 2 and vcf_bytes[:2] == b"\x1f\x8b"
-    if is_gz:
-        try: text = gzip.decompress(vcf_bytes).decode("utf-8", errors="replace")
-        except Exception as e: raise ValueError(f"Fichier .vcf.gz corrompu : {e}")
-    else: text = vcf_bytes.decode("utf-8", errors="replace")
-
+    text = gzip.decompress(vcf_bytes).decode("utf-8") if vcf_bytes[:2] == b"\x1f\x8b" else vcf_bytes.decode("utf-8")
     samples, rows = [], []
     for line in text.splitlines():
-        line = line.rstrip("\n\r")
-        if not line or line.startswith("##"): continue
-        if line.startswith("#CHROM"):
-            samples = line.split("\t")[9:]
-            continue
-        if line.startswith("#"): continue
-        parts = line.split("\t")
-        if len(parts) < 10: continue
-        chrom, pos_s, vid, ref, alt = parts[0], parts[1], parts[2], parts[3], parts[4]
-        if "," in alt: continue
-        try: pos = int(pos_s)
-        except ValueError: continue
-        fmt = parts[8].split(":")
-        if "GT" not in fmt: continue
-        gt_idx = fmt.index("GT")
-
-        gts = np.full(len(samples), np.nan, dtype=np.float32)
-        for k, s in enumerate(parts[9:]):
-            fields = s.split(":")
-            if gt_idx >= len(fields): continue
-            alleles = fields[gt_idx].replace("|", "/").split("/")
-            if any(a in (".", "") for a in alleles): continue
-            try: gts[k] = sum(int(a) for a in alleles)
-            except ValueError: continue
-
-        rows.append({"CHR": str(chrom), "SNP": vid or f"{chrom}:{pos}", "CM": 0.0, "BP": pos, "A1": ref, "A2": alt, "GT": gts})
-
-    if not rows: raise ValueError("Aucun variant biallélique trouvé dans le VCF.")
-    n_ind, n_snp = len(samples), len(rows)
-    gt = np.zeros((n_ind, n_snp), dtype=np.float32)
+        if line.startswith("#CHROM"): samples = line.split("\t")[9:]
+        elif not line.startswith("#") and line.strip():
+            parts = line.split("\t")
+            if len(parts) >= 10 and "," not in parts[4]:
+                fmt = parts[8].split(":")
+                if "GT" in fmt:
+                    gt_idx = fmt.index("GT"); gts = np.full(len(samples), np.nan, dtype=np.float32)
+                    for k, s in enumerate(parts[9:]):
+                        alleles = s.split(":")[gt_idx].replace("|", "/").split("/")
+                        if not any(a in (".", "") for a in alleles): gts[k] = sum(int(a) for a in alleles)
+                    rows.append({"CHR": str(parts[0]), "SNP": parts[2] or f"{parts[0]}:{parts[1]}", "CM": 0.0, "BP": int(parts[1]), "A1": parts[3], "A2": parts[4], "GT": gts})
+    gt = np.zeros((len(samples), len(rows)), dtype=np.float32)
     for j, r in enumerate(rows):
-        gt[:, j] = r["GT"]
-        valid = gt[:, j][~np.isnan(gt[:, j])]
-        if len(valid) > 0 and valid.mean() / 2.0 > 0.5:
-            gt[:, j] = np.where(np.isnan(gt[:, j]), np.nan, 2.0 - gt[:, j])
-
-    snp_df = pd.DataFrame({"CHR": [r["CHR"] for r in rows], "SNP": [r["SNP"] for r in rows], "CM": 0.0, "BP": [r["BP"] for r in rows], "A1": [r["A1"] for r in rows], "A2": [r["A2"] for r in rows]})
-    ind_df = pd.DataFrame({"FID": samples, "IID": samples})
-    return gt, ind_df, snp_df, 0, 0
+        gt[:, j] = r["GT"]; valid = gt[:, j][~np.isnan(gt[:, j])]
+        if len(valid) > 0 and valid.mean() / 2.0 > 0.5: gt[:, j] = np.where(np.isnan(gt[:, j]), np.nan, 2.0 - gt[:, j])
+    return gt, pd.DataFrame({"FID": samples, "IID": samples}), pd.DataFrame([{k:v for k,v in r.items() if k!="GT"} for r in rows])
 
 def generate_demo_data(n_ind=150, n_snp=800, n_pop=4, seed=42):
-    rng = np.random.default_rng(seed)
-    pool = ["AND", "EBG", "ELN", "EZP", "FGN", "LJR", "NAR", "NBD", "NKA", "PRS", "PSH", "PTP", "SHO", "YBS"]
-    n_pop = max(1, min(n_pop, len(pool)))
-    pop_names = pool[:n_pop]
-    counts = [n_ind // n_pop + (1 if i < n_ind % n_pop else 0) for i in range(n_pop)]
-    n_ind_eff = sum(counts)
-
-    p_anc = rng.beta(0.6, 0.6, n_snp)
-    drift = 0.15
-    gt = np.zeros((n_ind_eff, n_snp), dtype=np.float32)
-    ind_rows = []
-    k = 0
-    for pop, n_i in zip(pop_names, counts):
-        p_k = np.clip(p_anc + rng.normal(0, drift, n_snp), 0.02, 0.98)
-        for i in range(n_i):
-            gt[k] = (rng.random(n_snp) < p_k).astype(np.float32) + (rng.random(n_snp) < p_k).astype(np.float32)
-            ind_rows.append({"FID": pop, "IID": f"{pop}_{i + 1:03d}"})
-            k += 1
-
+    rng = np.random.default_rng(seed); pops = ["AND", "EBG", "ELN", "EZP", "FGN", "LJR", "NAR", "NBD", "NKA", "PRS"][:min(n_pop, 10)]
+    p_anc = rng.beta(0.6, 0.6, n_snp); gt, ind_rows, k = np.zeros((n_ind, n_snp), dtype=np.float32), [], 0
+    for p in pops:
+        p_k = np.clip(p_anc + rng.normal(0, 0.15, n_snp), 0.02, 0.98)
+        for i in range(n_ind // len(pops) + (1 if pops.index(p) < n_ind % len(pops) else 0)):
+            gt[k] = (rng.random(n_snp) < p_k) + (rng.random(n_snp) < p_k); ind_rows.append({"FID": p, "IID": f"{p}_{i+1:03d}"}); k += 1
     gt[rng.random(gt.shape) < 0.02] = np.nan
-    ind_df = pd.DataFrame(ind_rows)
     chr_names = rng.choice(BOVINE_AUTOSOMES, n_snp, p=_autosome_weights())
     bps = np.array([rng.integers(1, ARS_UCD12_LENGTHS[c]) for c in chr_names], dtype=np.int64)
     snp_df = pd.DataFrame({"CHR": chr_names, "SNP": [f"rs{i:07d}" for i in range(n_snp)], "CM": bps / 1_000_000, "BP": bps})
-    snp_df["_k"] = snp_df["CHR"].map(_chr_sort_key)
-    snp_df = (snp_df.sort_values(["_k", "BP"]).drop(columns="_k").reset_index(drop=True))
-    return gt, ind_df, snp_df
+    return gt, pd.DataFrame(ind_rows), snp_df.sort_values(by=["CHR", "BP"], key=lambda x: x.map(_chr_sort_key) if x.name=="CHR" else x).reset_index(drop=True)
 
-# ============================================================
-# MÉTRIQUES QC & FILTRAGE
-# ============================================================
+# --- ANALYSES & QC ---
 def missingness_per_ind(gt): return np.isnan(gt).mean(axis=1)
 def missingness_per_snp(gt): return np.isnan(gt).mean(axis=0)
-def allele_freq(gt): return np.nanmean(gt, axis=0) / 2.0
-def maf(gt): 
-    p = allele_freq(gt)
-    return np.minimum(p, 1.0 - p)
-def heterozygosity(gt): 
-    with np.errstate(invalid="ignore"):
-        return np.nanmean(gt == 1, axis=1)
+def maf(gt): p = np.nanmean(gt, axis=0) / 2.0; return np.minimum(p, 1.0 - p)
+def heterozygosity(gt): return np.nanmean(gt == 1, axis=1)
 
 def hwe_exact_p(n_het, n_hom1, n_hom2):
     n = n_het + n_hom1 + n_hom2
-    if n == 0: return np.nan
-    if n_het == 0 and (n_hom1 == 0 or n_hom2 == 0): return 1.0
-    rare = 2 * min(n_hom1, n_hom2) + n_het
-    mid = (rare * (2 * n - rare)) // (2 * n)
+    if n == 0 or n_het == 0 and (n_hom1 == 0 or n_hom2 == 0): return 1.0
+    rare, mid = 2 * min(n_hom1, n_hom2) + n_het, (2 * min(n_hom1, n_hom2) + n_het) * (2 * n - 2 * min(n_hom1, n_hom2) - n_het) // (2 * n)
     if mid % 2 != rare % 2: mid += 1
-    probs = np.zeros(rare + 1)
-    probs[mid] = 1.0
-    mysum = 1.0
+    probs = np.zeros(rare + 1); probs[mid] = 1.0; mysum = 1.0
     ch, chr_, chc = mid, (rare - mid) // 2, n - mid - (rare - mid) // 2
     while ch <= rare - 2:
-        probs[ch + 2] = probs[ch] * 4 * chr_ * chc / ((ch + 2) * (ch + 1))
-        mysum += probs[ch + 2]
-        ch += 2; chr_ -= 1; chc -= 1
+        probs[ch + 2] = probs[ch] * 4 * chr_ * chc / ((ch + 2) * (ch + 1)); mysum += probs[ch + 2]; ch += 2; chr_ -= 1; chc -= 1
     ch, chr_, chc = mid, (rare - mid) // 2, n - mid - (rare - mid) // 2
     while ch >= 2:
-        probs[ch - 2] = probs[ch] * ch * (ch - 1) / (4 * (chr_ + 1) * (chc + 1))
-        mysum += probs[ch - 2]
-        ch -= 2; chr_ += 1; chc += 1
-    p_obs = probs[n_het] if n_het < len(probs) else 0.0
-    return float(min(probs[probs <= p_obs + 1e-7].sum() / mysum, 1.0))
+        probs[ch - 2] = probs[ch] * ch * (ch - 1) / (4 * (chr_ + 1) * (chc + 1)); mysum += probs[ch - 2]; ch -= 2; chr_ += 1; chc += 1
+    return float(min(probs[probs <= (probs[n_het] if n_het < len(probs) else 0.0) + 1e-7].sum() / mysum, 1.0))
 
 @cache_data
 def hwe_pvalues(gt):
-    _, n_snp = gt.shape
-    pvals = np.full(n_snp, np.nan, dtype=np.float64)
-    nan_mask = np.isnan(gt)
-    n0 = ((gt == 0) & ~nan_mask).sum(axis=0); n1 = ((gt == 1) & ~nan_mask).sum(axis=0); n2 = ((gt == 2) & ~nan_mask).sum(axis=0)
+    pvals = np.full(gt.shape[1], np.nan); n0, n1, n2 = ((gt == 0) & ~np.isnan(gt)).sum(0), ((gt == 1) & ~np.isnan(gt)).sum(0), ((gt == 2) & ~np.isnan(gt)).sum(0)
     n_valid = n0 + n1 + n2
-    if n_snp <= HWE_EXACT_MAX_SNP:
-        for j in range(n_snp):
-            if n_valid[j] < 5: continue
-            pvals[j] = hwe_exact_p(int(n1[j]), int(n0[j]), int(n2[j]))
-    else:
-        p = (n1 + 2 * n2) / (2.0 * np.where(n_valid > 0, n_valid, np.nan))
-        with np.errstate(invalid="ignore", divide="ignore"):
-            exp_het = 2.0 * p * (1.0 - p) * n_valid
-            valid = (exp_het >= 5) & np.isfinite(exp_het)
-            chi2 = (np.abs(n1 - exp_het) - 0.5) ** 2 / exp_het
-            pvals[valid] = 1.0 - stats.chi2.cdf(chi2[valid], df=1)
+    for j in range(gt.shape[1]):
+        if n_valid[j] >= 5: pvals[j] = hwe_exact_p(int(n1[j]), int(n0[j]), int(n2[j]))
     return pvals
 
 def reconstruct_fid_from_iid(ind_df):
     df = ind_df.copy()
-    unique_fids = df["FID"].nunique() if "FID" in df.columns else 0
-    if unique_fids <= 1:
-        df["FID"] = df["IID"].astype(str).apply(lambda x: next((x.split(sep)[0] for sep in ("_", "-", ".") if sep in x), x))
-        st.info(f"🔧 FID reconstruit depuis IID → **{df['FID'].nunique()}** races.")
+    if df["FID"].nunique() <= 1: df["FID"] = df["IID"].astype(str).str.split("_").str[0]
     return df
 
-def filter_autosomes(gt, snp_df, keep_auto_only=True):
-    chr_str = snp_df["CHR"].astype(str).str.upper().str.replace("CHR", "")
-    keep = chr_str.isin([str(i) for i in range(1, 30)] + ([] if keep_auto_only else ["X", "Y", "MT"]))
-    n_before = len(snp_df)
-    gt2, snp2 = gt[:, keep.values], snp_df[keep].reset_index(drop=True)
-    st.info(f"🧬 Autosomes 1–29 : {n_before - len(snp2)} SNPs exclus → **{len(snp2)}** conservés.")
-    return gt2, snp2
+def filter_autosomes(gt, snp_df):
+    keep = snp_df["CHR"].astype(str).str.upper().str.replace("CHR", "").isin([str(i) for i in range(1, 30)])
+    return gt[:, keep.values], snp_df[keep].reset_index(drop=True)
 
 @cache_data
 def ld_pruning(gt, window=50, step=5, r2_thr=0.2):
-    n_snp = gt.shape[1]
-    if n_snp < 3: return np.ones(n_snp, dtype=bool)
-    keep = np.ones(n_snp, dtype=bool)
-    X = impute_mean(gt); X = X - X.mean(axis=0)
-    i = 0
-    while i < n_snp:
-        win_end = min(i + step, n_snp)
-        while win_end < n_snp and (win_end - i) < window:
-            j = win_end
-            if keep[j] and keep[i]:
-                a, b = X[:, i], X[:, j]
-                if a.std() > 1e-8 and b.std() > 1e-8:
-                    if np.corrcoef(a, b)[0, 1]**2 > r2_thr: keep[j] = False
+    keep = np.ones(gt.shape[1], dtype=bool); X = impute_mean(gt); X = X - X.mean(0); i = 0
+    while i < gt.shape[1]:
+        win_end = min(i + step, gt.shape[1])
+        while win_end < gt.shape[1] and (win_end - i) < window:
+            if keep[win_end] and keep[i] and X[:, i].std() > 1e-8 and X[:, win_end].std() > 1e-8:
+                if np.corrcoef(X[:, i], X[:, win_end])[0, 1]**2 > r2_thr: keep[win_end] = False
             win_end += 1
         i += step
     return keep
 
-def _align_shapes(gt, ind_df, snp_df):
-    n_gt, m_gt = gt.shape
-    n_ind, n_snp = min(n_gt, len(ind_df)), min(m_gt, len(snp_df))
-    if (n_gt, m_gt) != (len(ind_df), len(snp_df)):
-        st.warning(f"⚠️ Alignement : gt={gt.shape} → ({n_ind},{n_snp})")
-    return gt[:n_ind, :n_snp], ind_df.iloc[:n_ind].reset_index(drop=True), snp_df.iloc[:n_snp].reset_index(drop=True)
-
 def apply_qc_filters(gt, ind_df, snp_df, params, remove_outliers=True):
-    gt, ind_df, snp_df = _align_shapes(gt, ind_df, snp_df)
-    n0, m0 = gt.shape
     trace = {}
-
-    keep = missingness_per_snp(gt) <= params["geno"]
-    gt = gt[:, keep]; snp_df = snp_df[keep].reset_index(drop=True)
-    trace["geno_exclus"] = int(m0 - gt.shape[1])
-
-    keep = missingness_per_ind(gt) <= params["mind"]
-    gt = gt[keep]; ind_df = ind_df[keep].reset_index(drop=True)
-    trace["mind_exclus"] = int(n0 - gt.shape[0])
-
-    if gt.shape[1] == 0 or gt.shape[0] == 0: raise ValueError("Tous les SNPs ou individus exclus (missingness).")
-
-    m_before = gt.shape[1]; m = maf(gt)
-    keep = np.isfinite(m) & (m >= params["maf"])
-    gt = gt[:, keep]; snp_df = snp_df[keep].reset_index(drop=True)
-    trace["maf_exclus"] = int(m_before - gt.shape[1])
-    if gt.shape[1] == 0: raise ValueError("Tous les SNPs exclus par MAF.")
-
-    m_before = gt.shape[1]; pv = hwe_pvalues(gt)
-    keep = np.isnan(pv) | (pv >= 1e-6)
-    gt = gt[:, keep]; snp_df = snp_df[keep].reset_index(drop=True)
-    if gt.shape[1] > 0:
-        pv2 = hwe_pvalues(gt); keep = np.isnan(pv2) | (pv2 >= params["hwe"])
-        gt = gt[:, keep]; snp_df = snp_df[keep].reset_index(drop=True)
-    trace["hwe_exclus"] = int(m_before - gt.shape[1])
-    if gt.shape[1] == 0: raise ValueError("Tous les SNPs exclus par HWE.")
-
-    # SAUVEGARDE PRE-OUTLIERS
+    keep = missingness_per_snp(gt) <= params["geno"]; gt = gt[:, keep]; snp_df = snp_df[keep].reset_index(drop=True)
+    keep = missingness_per_ind(gt) <= params["mind"]; gt = gt[keep]; ind_df = ind_df[keep].reset_index(drop=True)
+    keep = np.isfinite(maf(gt)) & (maf(gt) >= params["maf"]); gt = gt[:, keep]; snp_df = snp_df[keep].reset_index(drop=True)
+    pv = hwe_pvalues(gt); keep = np.isnan(pv) | (pv >= params["hwe"]); gt = gt[:, keep]; snp_df = snp_df[keep].reset_index(drop=True)
     gt_pre, ind_pre, snp_pre = gt.copy(), ind_df.copy(), snp_df.copy()
-
     if remove_outliers:
         het = heterozygosity(gt); keep = np.ones(len(het), dtype=bool)
         for fid in ind_df["FID"].unique():
             mask = (ind_df["FID"] == fid).values; sub = het[mask]
-            if len(sub) < 5 or np.nanstd(sub) < 1e-9: continue
-            z = (sub - np.nanmean(sub)) / np.nanstd(sub)
-            idx = np.where(mask)[0]
-            keep[idx[~np.abs(z) <= params["het_sd"]]] = False
-        n_before = gt.shape[0]
-        gt = gt[keep]; ind_df = ind_df[keep].reset_index(drop=True)
-        trace["het_exclus"] = int(n_before - gt.shape[0])
-    else:
-        trace["het_exclus"] = 0
-
-    if gt.shape[0] == 0: raise ValueError("Tous les individus exclus (hétérozygotie).")
-
-    return gt, ind_df, snp_df, gt_pre, ind_pre, snp_pre, {
-        "n_ind_init": int(n0), "n_snp_init": int(m0), "n_ind_final": int(gt.shape[0]),
-        "n_snp_final": int(gt.shape[1]), "excluded_ind": int(n0 - gt.shape[0]),
-        "excluded_snp": int(m0 - gt.shape[1]), "trace": trace,
-    }
-    # ============================================================
-# POPULATION GENETICS & ANALYSES AVANCÉES
-# ============================================================
-@cache_data
+            if len(sub) >= 5 and np.nanstd(sub) > 1e-9:
+                z = (sub - np.nanmean(sub)) / np.nanstd(sub); idx = np.where(mask)[0]; keep[idx[np.abs(z) > params["het_sd"]]] = False
+        gt = gt[keep]; ind_df = ind_df[keep].reset_index(drop=True); trace["het_exclus"] = int(len(het) - len(ind_df))
+    return gt, ind_df, snp_df, gt_pre, ind_pre, snp_pre, {"n_ind_init": len(ind_pre), "n_snp_init": gt_pre.shape[1], "n_ind_final": len(ind_df), "n_snp_final": gt.shape[1], "excluded_ind": len(ind_pre) - len(ind_df), "excluded_snp": gt_pre.shape[1] - gt.shape[1], "trace": trace}
+    @cache_data
 def fst_per_snp(gt, pop_labels):
-    pops = np.unique(np.asarray(pop_labels))
-    if len(pops) < 2: return np.full(gt.shape[1], np.nan)
-    fst = np.full(gt.shape[1], np.nan, dtype=np.float64)
-    masks = {p: (np.asarray(pop_labels) == p) for p in pops}
+    pops = np.unique(pop_labels); fst = np.full(gt.shape[1], np.nan)
     for j in range(gt.shape[1]):
         pl, nl = [], []
         for p in pops:
-            vals = gt[masks[p], j]; vals = vals[~np.isnan(vals)]
-            if len(vals) < 3: continue
-            pl.append(vals.mean() / 2.0); nl.append(len(vals))
-        if len(pl) < 2: continue
-        p_arr, n_arr = np.asarray(pl), np.asarray(nl)
-        p_bar = np.average(p_arr, weights=n_arr)
-        h_s = np.average(2.0 * p_arr * (1.0 - p_arr), weights=n_arr)
-        h_t = 2.0 * p_bar * (1.0 - p_bar)
-        if h_t > 1e-9: fst[j] = (h_t - h_s) / h_t
+            vals = gt[pop_labels == p, j]; vals = vals[~np.isnan(vals)]
+            if len(vals) >= 3: pl.append(vals.mean() / 2.0); nl.append(len(vals))
+        if len(pl) >= 2:
+            p_bar = np.average(pl, weights=nl); h_s = np.average(2.0 * np.array(pl) * (1.0 - np.array(pl)), weights=nl); h_t = 2.0 * p_bar * (1.0 - p_bar)
+            if h_t > 1e-9: fst[j] = (h_t - h_s) / h_t
     return fst
-
-@cache_data
-def fst_pairwise(gt, pop_labels):
-    labels = np.asarray(pop_labels)
-    pops = sorted(np.unique(labels)); K = len(pops)
-    matrix = np.full((K, K), np.nan); np.fill_diagonal(matrix, 0.0)
-    masks = {p: (labels == p) for p in pops}
-    for i in range(K):
-        for j in range(i + 1, K):
-            g1 = gt[masks[pops[i]]]; g2 = gt[masks[pops[j]]]
-            p1 = np.nanmean(g1, 0) / 2.0; p2 = np.nanmean(g2, 0) / 2.0
-            n1 = (~np.isnan(g1)).sum(0); n2 = (~np.isnan(g2)).sum(0)
-            denom = np.where(n1 + n2 > 0, n1 + n2, np.nan)
-            p_bar = (p1 * n1 + p2 * n2) / denom
-            hs = (2 * p1 * (1 - p1) * n1 + 2 * p2 * (1 - p2) * n2) / denom
-            ht = 2 * p_bar * (1 - p_bar)
-            with np.errstate(divide="ignore", invalid="ignore"):
-                fst_j = (ht - hs) / ht
-            matrix[i, j] = matrix[j, i] = float(np.nanmean(fst_j))
-    return matrix, pops
 
 @cache_data
 def pca_analysis(gt, n_components=10):
@@ -657,125 +287,30 @@ def pca_analysis(gt, n_components=10):
     return pca.fit_transform(X), pca.explained_variance_ratio_ * 100.0
 
 @cache_data
-def mds_analysis(gt, n_components=5):
-    X = impute_mean(gt); n = X.shape[0]
-    D = np.zeros((n, n), dtype=np.float32)
-    for i in range(n): D[i] = np.abs(X - X[i]).sum(1) / X.shape[1]
-    return SklearnMDS(n_components=n_components, dissimilarity="precomputed", random_state=42, n_init=1, max_iter=300, normalized_stress=False).fit_transform(D)
-
-@cache_data
-def ld_decay(gt, snp_bp, max_kb=1000, max_snp=1500, seed=42):
-    n_snp = gt.shape[1]
-    if n_snp < 2: return pd.DataFrame(columns=["dist_kb", "r2"])
-    idx = np.sort(np.random.default_rng(seed).choice(n_snp, max_snp, replace=False)) if n_snp > max_snp else np.arange(n_snp)
-    gt_sub = impute_mean(gt[:, idx]); bp_sub = np.asarray(snp_bp)[idx].astype(np.float64)
-    X = gt_sub - gt_sub.mean(0); std = gt_sub.std(0); std[std < 1e-8] = np.nan; X = X / std
-    C = (X.T @ X) / X.shape[0]; R2 = C ** 2
-    iu, ju = np.triu_indices(len(idx), k=1)
-    dist_kb = (bp_sub[ju] - bp_sub[iu]) / 1000.0
-    mask = (dist_kb > 0) & (dist_kb <= max_kb)
-    return pd.DataFrame({"dist_kb": dist_kb[mask], "r2": R2[iu[mask], ju[mask]]})
-
-@cache_data
-def kinship_matrix(gt):
-    X = impute_mean(gt); p = np.clip(X.mean(0) / 2.0, 1e-3, 1 - 1e-3)
-    Z = X - 2 * p; Zn = Z / np.sqrt(2 * p * (1 - p))
-    return (Zn @ Zn.T) / X.shape[1]
-
-@cache_data
 def king_kinship(gt):
-    n_ind = gt.shape[0]; het = np.nansum(gt == 1, axis=1).astype(np.float64)
-    K = np.zeros((n_ind, n_ind))
-    for i in range(n_ind):
-        for j in range(i + 1, n_ind):
-            both_het = np.nansum((gt[i] == 1) & (gt[j] == 1))
-            denom = het[i] + het[j]
+    het = np.nansum(gt == 1, axis=1).astype(np.float64); K = np.zeros((gt.shape[0], gt.shape[0]))
+    for i in range(gt.shape[0]):
+        for j in range(i + 1, gt.shape[0]):
+            both_het = np.nansum((gt[i] == 1) & (gt[j] == 1)); denom = het[i] + het[j]
             K[i, j] = K[j, i] = (denom - 2 * both_het) / denom if denom > 0 else 0.0
     np.fill_diagonal(K, 0.5)
     return K
 
-def apply_king_cutoff(K, ind_df, cutoff=0.354):
-    n = K.shape[0]; to_remove = np.zeros(n, dtype=bool)
-    pairs = [(i, j) for i in range(n) for j in range(i + 1, n) if K[i, j] > cutoff and not to_remove[i] and not to_remove[j]]
-    for i, j in pairs: to_remove[j] = True
-    return ~to_remove, int(to_remove.sum())
-
 @cache_data
-def admixture_nmf(gt, K=3, seed=42, max_iter=500):
-    X = np.clip(impute_mean(gt), 0.0, 2.0)
-    model = NMF(n_components=K, init="nndsvda", random_state=seed, max_iter=max_iter)
-    W = model.fit_transform(X); s = W.sum(1, keepdims=True); s[s == 0] = 1.0
+def admixture_nmf(gt, K=3, seed=42):
+    model = NMF(n_components=K, init="nndsvda", random_state=seed, max_iter=500)
+    W = model.fit_transform(np.clip(impute_mean(gt), 0.0, 2.0)); s = W.sum(1, keepdims=True); s[s == 0] = 1.0
     return W / s, model.components_
 
 @cache_data
-def admix_cv_error(gt, K_range=(2, 6), n_reps=3, holdout=0.05, seed=42):
-    rng = np.random.default_rng(seed); X = np.clip(impute_mean(gt), 0.0, 2.0)
-    n, m = X.shape; mask = rng.random((n, m)) < holdout
-    X_train = X.copy(); X_train[mask] = 0.0
-    results = {}
-    for K in range(K_range[0], K_range[1]):
-        errs = []
-        for rep in range(n_reps):
-            model = NMF(n_components=K, init="nndsvda", random_state=seed + rep, max_iter=300)
-            W = model.fit_transform(X_train); H = model.components_
-            errs.append(np.mean((X[mask] - (W @ H)[mask]) ** 2))
-        results[K] = {"mean": float(np.mean(errs)), "std": float(np.std(errs))}
-    return results
-
-@cache_data
-def estimate_ne_historical(gt, snp_df, max_snp=2000):
-    bp = snp_df["BP"].astype(np.float64).values; chr_arr = snp_df["CHR"].astype(str).values
-    n_snp = gt.shape[1]
-    if n_snp > max_snp:
-        idx = np.linspace(0, n_snp - 1, max_snp).astype(int)
-        gt = gt[:, idx]; bp = bp[idx]; chr_arr = chr_arr[idx]
-    X = impute_mean(gt); X = (X - X.mean(0)) / (X.std(0) + 1e-9)
-    r2_list, dist_list = [], []
-    n = X.shape[1]
-    for i in range(0, n - 1):
-        for j in range(i + 1, min(i + 50, n)):
-            if chr_arr[i] != chr_arr[j]: continue
-            d = abs(bp[j] - bp[i]) / 1e6
-            if d < 0.001 or d > 50: continue
-            r = np.corrcoef(X[:, i], X[:, j])[0, 1]
-            r2_list.append(r * r); dist_list.append(d)
-    if not dist_list: return pd.DataFrame({"GenAgo": [], "Ne": []})
-    r2 = np.array(r2_list); dist = np.array(dist_list)
-    bins = np.logspace(np.log10(dist.min() + 1e-6), np.log10(dist.max()), 20)
-    bc = (bins[:-1] + bins[1:]) / 2
-    r2b = np.array([r2[(dist >= bins[k]) & (dist < bins[k + 1])].mean() if ((dist >= bins[k]) & (dist < bins[k + 1])).sum() > 0 else np.nan for k in range(len(bins) - 1)])
-    m = np.isfinite(r2b)
-    if m.sum() < 3: return pd.DataFrame({"GenAgo": [], "Ne": []})
-    c_morgans = bc[m] * 0.01; r2v = r2b[m]
-    ne = np.where(r2v > 1e-4, 1.0 / (4 * c_morgans * r2v), np.nan)
-    df = pd.DataFrame({"GenAgo": bc[m] * 100, "Ne": ne}).dropna()
-    df = df[df["Ne"] > 0].sort_values("GenAgo")
-    if len(df) > 3: df["Ne"] = df["Ne"].rolling(3, center=True, min_periods=1).mean()
-    return df
-
-@cache_data
-def reynolds_distance(gt, pop_labels):
-    labels = np.asarray(pop_labels); pops = sorted(np.unique(labels)); K = len(pops)
-    p_hat = {p: np.nanmean(gt[labels == p], 0) / 2.0 for p in pops}
-    D = np.zeros((K, K))
-    for i in range(K):
-        for j in range(i + 1, K):
-            pi, pj = p_hat[pops[i]], p_hat[pops[j]]
-            num = np.nansum((pi - pj) ** 2); denom = np.nansum(pi * (1 - pj) + pj * (1 - pi))
-            if denom > 0: D[i, j] = D[j, i] = num / denom
-    return D, pops
-
-def nj_tree_newick(D, labels):
-    try:
-        from scipy.cluster.hierarchy import linkage, to_tree
-        from scipy.spatial.distance import squareform
-        Dm = squareform(D, checks=False)
-        Z = linkage(Dm, method="average"); tree = to_tree(Z)
-        def rec(node):
-            if node.is_leaf(): return f"{labels[node.id]}:{node.dist:.4f}"
-            return f"({rec(node.get_left())},{rec(node.get_right())}):{node.dist:.4f}"
-        return rec(tree)
-    except Exception as e: return f"Erreur NJ : {e}"
+def ld_decay(gt, snp_bp, max_kb=1000, max_snp=1500, seed=42):
+    idx = np.sort(np.random.default_rng(seed).choice(gt.shape[1], max_snp, replace=False)) if gt.shape[1] > max_snp else np.arange(gt.shape[1])
+    gt_sub = impute_mean(gt[:, idx]); bp_sub = np.asarray(snp_bp)[idx].astype(np.float64)
+    X = gt_sub - gt_sub.mean(0); std = gt_sub.std(0); std[std < 1e-8] = np.nan; X = X / std
+    R2 = ((X.T @ X) / X.shape[0]) ** 2
+    iu, ju = np.triu_indices(len(idx), k=1); dist_kb = (bp_sub[ju] - bp_sub[iu]) / 1000.0
+    mask = (dist_kb > 0) & (dist_kb <= max_kb)
+    return pd.DataFrame({"dist_kb": dist_kb[mask], "r2": R2[iu[mask], ju[mask]]})
 
 @cache_data
 def detect_roh(gt, snp_df_json, min_snps=30, min_kb=500.0):
@@ -799,22 +334,7 @@ def detect_roh(gt, snp_df_json, min_snps=30, min_kb=500.0):
                             rohs.append({"IID_idx": i, "CHR": chrom, "start_bp": int(bp[idxs[start_k]]), "end_bp": int(bp[idxs[k - 1]]), "n_snp": int(n_run), "length_kb": float(length_kb)})
                             froh_bp[i] += bp[idxs[k - 1]] - bp[idxs[start_k]]
                         start_k = None
-            if start_k is not None:
-                n_run = len(idxs) - start_k; length_kb = (bp[idxs[-1]] - bp[idxs[start_k]]) / 1000.0
-                if n_run >= min_snps and length_kb >= min_kb:
-                    rohs.append({"IID_idx": i, "CHR": chrom, "start_bp": int(bp[idxs[start_k]]), "end_bp": int(bp[idxs[-1]]), "n_snp": int(n_run), "length_kb": float(length_kb)})
-                    froh_bp[i] += bp[idxs[-1]] - bp[idxs[start_k]]
-    froh = froh_bp / genome_bp_total if genome_bp_total > 0 else froh_bp
-    roh_df = (pd.DataFrame(rohs) if rohs else pd.DataFrame(columns=["IID_idx", "CHR", "start_bp", "end_bp", "n_snp", "length_kb"]))
-    return roh_df, froh
-
-@cache_data
-def selection_signatures(gt, snp_df, pop_labels):
-    fst = fst_per_snp(gt, np.asarray(pop_labels)); hom = np.nanmean((gt == 0) | (gt == 2), axis=0)
-    df = snp_df.copy(); df["FST"] = fst; df["HOM"] = hom
-    hom_std = df["HOM"].std()
-    df["SCORE"] = (df["FST"].fillna(0) * (df["HOM"] - df["HOM"].mean()) / (hom_std if hom_std > 1e-9 else 1.0))
-    return df.sort_values("SCORE", ascending=False)
+    return pd.DataFrame(rohs) if rohs else pd.DataFrame(columns=["IID_idx", "CHR", "start_bp", "end_bp", "n_snp", "length_kb"]), froh_bp / genome_bp_total if genome_bp_total > 0 else froh_bp
 
 @cache_data
 def windowed_selection_scan(gt, snp_df, pop_labels, window_size=50):
@@ -869,9 +389,6 @@ def find_genes_near_snps(snp_df, gff_df, window_kb=50):
                 results.append({"SNP": snp.get("SNP", f"{chrom}:{pos}"), "CHR": chrom, "SNP_POS": pos, "GENE": gene["GENE"], "DISTANCE_KB": round(abs(gene["START"] - pos) / 1000.0, 2)})
     return pd.DataFrame(results)
 
-# ============================================================
-# GWAS & LMM
-# ============================================================
 def load_phenotypes_file(file_bytes, filename=""):
     raw = gzip.decompress(file_bytes) if filename.endswith(".gz") else file_bytes
     text = raw.decode("utf-8", errors="replace"); sep = "\t" if text.count("\t") > text.count(",") else ","
@@ -914,17 +431,14 @@ def run_gwas_lmm(gt, pheno_vec, K, covariates, maf_min=0.05, missing_max=0.05, u
         se = float(np.sqrt(s2 * np.linalg.inv(X.T @ X)[-1, -1]))
         if se > 0:
             t_val = beta[-1] / se; out["SNP_idx"].append(j); out["MAF"].append(maf_j); out["BETA"].append(beta[-1]); out["SE"].append(se); out["T"].append(t_val); out["P"].append(float(2 * t_dist.sf(abs(t_val), df=max(len(Y) - X.shape[1], 1))))
-    return pd.DataFrame(out) if out["SNP_idx"] else pd.DataFrame(columns=["SNP_idx", "MAF", "BETA", "SE", "T", "P"])
+    return pd.DataFrame(out)
 
 def annotate_gwas_results(res_df, snp_df):
     if res_df.empty: return res_df
     idx = res_df["SNP_idx"].astype(int).values; res_df = res_df.copy()
     for col in ["SNP", "CHR", "BP", "CM"]: res_df[col] = snp_df[col].astype(str if col in ["SNP","CHR"] else float if col=="CM" else int).values[idx]
     return res_df[["SNP_idx", "SNP", "CHR", "BP", "CM", "MAF", "BETA", "SE", "T", "P"]]
-    # ============================================================
-# IA & EXPORT
-# ============================================================
-def interpret_with_llm(context, api_key=None, model="llama-3.3-70b-versatile"):
+    def interpret_with_llm(context, api_key=None, model="llama-3.3-70b-versatile"):
     api_key = api_key or os.environ.get("GROQ_API_KEY")
     if not api_key: return "⚠️ Pas de clé API Groq."
     try:
@@ -947,9 +461,6 @@ def build_plink_zip(gt, ind_df, snp_df, prefix="bovine_qc"):
         zf.writestr(f"{prefix}.bed", bytes(buf)); zf.writestr(f"{prefix}.bim", "\n".join(f"{r['CHR']}\t{r['SNP']}\t{r['CM']}\t{int(r['BP'])}\tA\tG" for _, r in snp_df.iterrows()) + "\n"); zf.writestr(f"{prefix}.fam", "\n".join(f"{r['FID']}\t{r['IID']}\t0\t0\t0\t-9" for _, r in ind_df.iterrows()) + "\n")
     return bio.getvalue()
 
-# ============================================================
-# VISUALISATION (R-STYLE)
-# ============================================================
 def plot_hist(values, title, xlabel, color="#3498db"):
     fig = go.Figure(go.Histogram(x=values, nbinsx=80, marker_color=color)); fig.update_layout(title=title, xaxis_title=xlabel, yaxis_title="Fréquence", height=380); return fig
 def plot_missingness_dashboard(miss_ind, miss_snp):
@@ -985,9 +496,6 @@ def plot_gene_track(snp_info, gene_df, window_kb=50):
     fig.add_vline(x=pos / 1e6, line_dash="dash", line_color="red", annotation_text=f"SNP: {snp_info.get('SNP', 'Cible')}")
     fig.update_layout(title=f"Gènes autour de {snp_info.get('SNP', 'SNP')} (CHR {chrom})", xaxis_title="Position (Mb)", yaxis_title="Gènes", yaxis=dict(showticklabels=False), height=400 + (len(region_genes) * 20)); return fig
 
-# ============================================================
-# STREAMLIT UI
-# ============================================================
 _STATE_KEYS = ["gt", "ind_df", "snp_df", "gt_filt", "ind_filt", "snp_filt", "gt_pre_outlier", "ind_pre_outlier", "snp_pre_outlier", "gt_pruned", "snp_pruned", "pca_scores", "pca_var", "king_matrix", "pheno_matched", "gwas_results", "sel_scan_df", "gebv_df", "admixture_Q", "admixture_K", "ld_df", "roh_df", "froh", "_conv_ped", "_conv_map", "cv_results", "ne_dict", "reynolds_D", "reynolds_pops", "fst", "fst_pairwise_matrix", "fst_pops", "selection_df", "qc_stats", "mds_coords", "run_requested", "_plink_zip", "_vcf_str", "_report_html", "annotation_df"]
 def init_state():
     for k in _STATE_KEYS:
@@ -995,16 +503,44 @@ def init_state():
 
 def main():
     init_state()
-    st.title("🐄 Bovine SNP Platform v6.0 (Ultra-Flexible)")
+    st.title("🐄 Bovine SNP Platform v6.1")
+    
     with st.sidebar:
         st.header("📁 Données")
         mode = st.radio("Source :", ["Demo", "Upload PED/MAP", "Upload VCF", "🔄 Axiom → PED"], key="sb_mode_source")
+        
         if mode == "Demo" and st.button("🎲 Générer démo", use_container_width=True):
             gt, ind_df, snp_df = generate_demo_data(); st.session_state.update({"gt": gt, "ind_df": reconstruct_fid_from_iid(ind_df), "snp_df": snp_df}); st.success("✅ Démo générée.")
+            
         elif mode == "Upload PED/MAP":
             ped_f = st.file_uploader("Fichier .ped", type=["ped", "gz"]); map_f = st.file_uploader("Fichier .map", type=["map", "gz"])
             if ped_f and map_f and st.button("📥 Charger"):
-                map_df = parse_map(map_f.read()); gt, ind_df = parse_ped(ped_f.read(), len(map_df)); st.session_state.update({"gt": gt, "ind_df": reconstruct_fid_from_iid(ind_df), "snp_df": map_df}); st.success("✅ Données chargées.")
+                try:
+                    map_df = parse_map(map_f.read())
+                    gt, ind_df = parse_ped(ped_f.read(), len(map_df))
+                    
+                    # Sécurité : Troncature du MAP s'il est plus long que le PED
+                    if len(map_df) > gt.shape[1]:
+                        st.warning(f"⚠️ Le fichier MAP ({len(map_df)} SNPs) est plus long que le fichier PED ({gt.shape[1]} SNPs). Le MAP a été tronqué.")
+                        map_df = map_df.iloc[:gt.shape[1]].reset_index(drop=True)
+                    elif len(map_df) < gt.shape[1]:
+                        st.warning(f"⚠️ Le fichier PED ({gt.shape[1]} SNPs) est plus long que le fichier MAP ({len(map_df)} SNPs). Les SNPs en trop sont ignorés.")
+                        gt = gt[:, :len(map_df)]
+                        
+                    st.session_state.update({"gt": gt, "ind_df": reconstruct_fid_from_iid(ind_df), "snp_df": map_df})
+                    st.success("✅ Données chargées.")
+                except Exception as e:
+                    st.error(f"❌ Erreur de chargement : {e}")
+                    
+        elif mode == "Upload VCF":
+            vcf_f = st.file_uploader("Fichier .vcf", type=["vcf", "gz"])
+            if vcf_f and st.button("📥 Charger"):
+                try:
+                    gt, ind_df, snp_df = parse_vcf(vcf_f.read())
+                    st.session_state.update({"gt": gt, "ind_df": reconstruct_fid_from_iid(ind_df), "snp_df": snp_df}); st.success("✅ Données chargées.")
+                except Exception as e:
+                    st.error(f"❌ Erreur : {e}")
+                    
         elif mode == "🔄 Axiom → PED":
             raw_f = st.file_uploader("Fichier Axiom", type=["txt", "csv", "tsv", "gz"])
             if raw_f and st.button("Convertir"):
@@ -1013,6 +549,7 @@ def main():
                 ped_lines = ["\t".join([sample_to_fid_iid(s)[0], sample_to_fid_iid(s)[1], "0", "0", "0", "-9"] + [a for pair in row for a in pair]) for s, row in zip(samples, geno_rows)]
                 st.session_state.update({"_conv_ped": "\n".join(ped_lines) + "\n", "_conv_map": map_text}); st.success(f"✅ {len(samples)} ind × {n_snp} SNPs.")
             if st.session_state.get("_conv_ped"): st.download_button("⬇ .ped", st.session_state["_conv_ped"].encode(), "out.ped"); st.download_button("⬇ .map", st.session_state["_conv_map"].encode(), "out.map")
+            
         st.divider(); st.header("⚙️ Seuils QC")
         geno = st.slider("Missing SNP", 0.0, 0.5, 0.05); mind = st.slider("Missing Ind", 0.0, 0.5, 0.05); maf_thr = st.slider("MAF", 0.0, 0.5, 0.05); hwe_thr = st.number_input("HWE", value=1e-6, format="%.0e")
         remove_outliers = st.checkbox("❌ Supprimer outliers", value=True)
