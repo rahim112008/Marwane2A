@@ -1,5 +1,7 @@
 """
-🐄 Bovine SNP Platform v6.1 (Version Complète et Intégrale Corrigée)
+🐄 Bovine SNP Platform v6.2 (Intégrale et Fonctionnelle)
+Toutes les fonctionnalités : Axiom, QC, LD, Structure, Admixture, Démographie, 
+Sélection, GWAS, Post-GWAS, GBLUP, Annotation, Export, IA.
 """
 import gzip, io, json, os, warnings, zipfile
 from collections import Counter
@@ -18,12 +20,11 @@ from sklearn.decomposition import NMF, PCA
 from sklearn.manifold import MDS as SklearnMDS
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
-
-st.set_page_config(page_title="🐄 Bovine SNP Platform v6.1", page_icon="🐄", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="🐄 Bovine SNP Platform v6.2", page_icon="🐄", layout="wide", initial_sidebar_state="expanded")
 
 DEFAULT_THRESHOLDS = {"geno": 0.05, "mind": 0.05, "maf": 0.05, "hwe": 1e-6, "het_sd": 3.0, "king_cutoff": 0.354, "ld_r2": 0.2}
 HWE_EXACT_MAX_SNP = 20_000
-ARS_UCD12_LENGTHS = {"1": 158_534_110, "2": 136_231_102, "3": 121_005_158, "4": 120_000_166, "5": 120_089_699, "6": 117_806_340, "7": 110_682_743, "8": 113_384_748, "9": 105_708_134, "10": 103_308_737, "11": 107_310_763, "12": 91_163_125, "13": 84_246_514, "14": 84_648_346, "15": 85_207_080, "16": 81_726_628, "17": 75_176_999, "18": 66_059_976, "19": 64_089_169, "20": 72_042_983, "21": 71_599_096, "22": 61_416_492, "23": 52_531_573, "24": 62_384_193, "25": 42_959_610, "26": 51_680_158, "27": 46_772_073, "28": 46_333_854, "29": 51_319_414, "X": 139_009_144, "Y": 50_927_933, "MT": 16_338}
+ARS_UCD12_LENGTHS = {"1": 158_534_110, "2": 136_231_102, "3": 121_005_158, "4": 120_000_166, "5": 120_089_699, "6": 117_806_340, "7": 110_682_743, "8": 113_384_748, "9": 105_708_134, "10": 103_308_737, "11": 107_310_763, "12": 91_163_125, "13": 84_246_514, "14": 84_648_346, "15": 85_207_080, "16": 81_726_628, "17": 75_176_999, "18": 66_059_976, "19": 64_089_169, "20": 72_042_983, "21": 71_599_096, "22": 61_416_492, "23": 52_531_573, "24": 62_384_193, "25": 42_959_610, "26": 51_680_158, "27": 46_772_073, "28": 46_333_854, "29": 51_319_414}
 BOVINE_AUTOSOMES = [str(i) for i in range(1, 30)]
 
 def _hash_ndarray(x):
@@ -140,7 +141,6 @@ def parse_ped(ped_bytes, n_snp_map):
     if n_cols_first < 7: raise ValueError(f"❌ Format PED invalide : {n_cols_first} colonnes.")
     if 0 < n_snp_ped < 10 and len(lines) > 100: raise ValueError("⚠️ Fichier probablement transposé. Les SNPs doivent être en colonnes.")
 
-    # CORRECTION : On utilise le nombre de SNPs du fichier PED comme référence absolue
     n_snp_eff = n_snp_ped 
     expected_cols_eff = 6 + 2 * n_snp_eff
     fids, iids, geno_rows = [], [], []
@@ -267,7 +267,8 @@ def apply_qc_filters(gt, ind_df, snp_df, params, remove_outliers=True):
                 z = (sub - np.nanmean(sub)) / np.nanstd(sub); idx = np.where(mask)[0]; keep[idx[np.abs(z) > params["het_sd"]]] = False
         gt = gt[keep]; ind_df = ind_df[keep].reset_index(drop=True); trace["het_exclus"] = int(len(het) - len(ind_df))
     return gt, ind_df, snp_df, gt_pre, ind_pre, snp_pre, {"n_ind_init": len(ind_pre), "n_snp_init": gt_pre.shape[1], "n_ind_final": len(ind_df), "n_snp_final": gt.shape[1], "excluded_ind": len(ind_pre) - len(ind_df), "excluded_snp": gt_pre.shape[1] - gt.shape[1], "trace": trace}
-    @cache_data
+
+@cache_data
 def fst_per_snp(gt, pop_labels):
     pops = np.unique(pop_labels); fst = np.full(gt.shape[1], np.nan)
     for j in range(gt.shape[1]):
@@ -438,7 +439,8 @@ def annotate_gwas_results(res_df, snp_df):
     idx = res_df["SNP_idx"].astype(int).values; res_df = res_df.copy()
     for col in ["SNP", "CHR", "BP", "CM"]: res_df[col] = snp_df[col].astype(str if col in ["SNP","CHR"] else float if col=="CM" else int).values[idx]
     return res_df[["SNP_idx", "SNP", "CHR", "BP", "CM", "MAF", "BETA", "SE", "T", "P"]]
-    def interpret_with_llm(context, api_key=None, model="llama-3.3-70b-versatile"):
+
+def interpret_with_llm(context, api_key=None, model="llama-3.3-70b-versatile"):
     api_key = api_key or os.environ.get("GROQ_API_KEY")
     if not api_key: return "⚠️ Pas de clé API Groq."
     try:
@@ -503,7 +505,7 @@ def init_state():
 
 def main():
     init_state()
-    st.title("🐄 Bovine SNP Platform v6.1")
+    st.title("🐄 Bovine SNP Platform v6.2")
     
     with st.sidebar:
         st.header("📁 Données")
@@ -519,7 +521,6 @@ def main():
                     map_df = parse_map(map_f.read())
                     gt, ind_df = parse_ped(ped_f.read(), len(map_df))
                     
-                    # Sécurité : Troncature du MAP s'il est plus long que le PED
                     if len(map_df) > gt.shape[1]:
                         st.warning(f"⚠️ Le fichier MAP ({len(map_df)} SNPs) est plus long que le fichier PED ({gt.shape[1]} SNPs). Le MAP a été tronqué.")
                         map_df = map_df.iloc[:gt.shape[1]].reset_index(drop=True)
