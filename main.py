@@ -15,7 +15,7 @@ from sklearn.decomposition import NMF, PCA
 from sklearn.manifold import MDS as SklearnMDS
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
-st.set_page_config(page_title="🐄 Bovine SNP Platform v7.2", page_icon="🐄", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="🐄 Bovine SNP Platform v7.4", page_icon="🐄", layout="wide", initial_sidebar_state="expanded")
 
 DEFAULT_THRESHOLDS = {"geno": 0.05, "mind": 0.05, "maf": 0.05, "hwe": 1e-6, "het_sd": 3.0, "king_cutoff": 0.354, "ld_r2": 0.2}
 ARS_UCD12_LENGTHS = {"1": 158_534_110, "2": 136_231_102, "3": 121_005_158, "4": 120_000_166, "5": 120_089_699, "6": 117_806_340, "7": 110_682_743, "8": 113_384_748, "9": 105_708_134, "10": 103_308_737, "11": 107_310_763, "12": 91_163_125, "13": 84_246_514, "14": 84_648_346, "15": 85_207_080, "16": 81_726_628, "17": 75_176_999, "18": 66_059_976, "19": 64_089_169, "20": 72_042_983, "21": 71_599_096, "22": 61_416_492, "23": 52_531_573, "24": 62_384_193, "25": 42_959_610, "26": 51_680_158, "27": 46_772_073, "28": 46_333_854, "29": 51_319_414}
@@ -338,7 +338,12 @@ def match_phenotypes(ind_df, pheno_df, iid_col=None, mapping_df=None):
 def run_gwas_lmm(gt, pheno_vec, K, covariates, maf_min=0.05, missing_max=0.05, use_lmm=True, is_binary=False):
     valid_ind = np.isfinite(pheno_vec)
     if valid_ind.sum() < 10: raise ValueError(f"Moins de 10 individus avec phénotype valide ({valid_ind.sum()}).")
-    Y, gt_v, K_v = pheno_vec[valid_ind], gt[valid_ind], np.asarray(K)[np.ix_(valid_ind, valid_ind)]
+    
+    # SÉCURITÉ : Gérer K=None ou dimensions incorrectes
+    if K is None or not isinstance(K, np.ndarray) or K.shape[0] != gt.shape[0]:
+        K = np.eye(gt.shape[0])
+        
+    Y, gt_v, K_v = pheno_vec[valid_ind], gt[valid_ind], K[np.ix_(valid_ind, valid_ind)]
     X0 = np.ones((len(Y), 1)) if covariates is None or covariates.size == 0 else np.column_stack([np.ones(len(Y)), np.asarray(covariates)[valid_ind]])
     X0 = X0[:, np.std(X0, axis=0) > 1e-10]
     
@@ -446,8 +451,19 @@ def plot_admixture(Q, labels, pop_labels, K):
     fig = go.Figure()
     for k in range(K): fig.add_trace(go.Bar(x=df["x"], y=df[f"K{k+1}"], name=f"Composante {k+1}", marker_color=px.colors.qualitative.Set2[k % 8]))
     fig.update_layout(barmode="stack", title=f"Proportions d'ancestralité (K={K})", height=500); return fig, df
+
 def plot_gblup(gebv_df):
-    fig = px.scatter(gebv_df, x="Phenotype", y="GEBV", trendline="ols", title="Validation GBLUP : Phénotype vs GEBV"); fig.update_trace(marker=dict(size=10, color="royalblue")); return fig
+    fig = px.scatter(gebv_df, x="Phenotype", y="GEBV", title="Validation GBLUP : Phénotype vs GEBV")
+    fig.update_traces(marker=dict(size=10, color="royalblue"))
+    if len(gebv_df) > 1:
+        try:
+            z = np.polyfit(gebv_df["Phenotype"], gebv_df["GEBV"], 1)
+            p = np.poly1d(z)
+            x_range = np.linspace(gebv_df["Phenotype"].min(), gebv_df["Phenotype"].max(), 100)
+            fig.add_trace(go.Scatter(x=x_range, y=p(x_range), mode="lines", name="Ligne OLS", line=dict(color="red", dash="dash")))
+        except: pass
+    return fig
+
 def plot_pip(pip_df):
     return px.bar(pip_df.head(20), x="SNP", y="PIP", title="Fine-Mapping (PIP)", color="PIP", color_continuous_scale="Viridis")
 
@@ -458,7 +474,7 @@ def init_state():
 
 def main():
     init_state()
-    st.title("🐄 Bovine SNP Platform v7.2")
+    st.title("🐄 Bovine SNP Platform v7.4")
     
     with st.sidebar:
         st.header("📁 Données")
