@@ -9,19 +9,18 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 from scipy import stats
-from scipy.optimize import minimize_scalar, minimize
+from scipy.optimize import minimize_scalar
 from scipy.stats import t as t_dist
 from sklearn.decomposition import NMF, PCA
 from sklearn.manifold import MDS as SklearnMDS
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
-st.set_page_config(page_title="🐄 Bovine SNP Platform v7.0", page_icon="🐄", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="🐄 Bovine SNP Platform v7.2", page_icon="🐄", layout="wide", initial_sidebar_state="expanded")
 
 DEFAULT_THRESHOLDS = {"geno": 0.05, "mind": 0.05, "maf": 0.05, "hwe": 1e-6, "het_sd": 3.0, "king_cutoff": 0.354, "ld_r2": 0.2}
 ARS_UCD12_LENGTHS = {"1": 158_534_110, "2": 136_231_102, "3": 121_005_158, "4": 120_000_166, "5": 120_089_699, "6": 117_806_340, "7": 110_682_743, "8": 113_384_748, "9": 105_708_134, "10": 103_308_737, "11": 107_310_763, "12": 91_163_125, "13": 84_246_514, "14": 84_648_346, "15": 85_207_080, "16": 81_726_628, "17": 75_176_999, "18": 66_059_976, "19": 64_089_169, "20": 72_042_983, "21": 71_599_096, "22": 61_416_492, "23": 52_531_573, "24": 62_384_193, "25": 42_959_610, "26": 51_680_158, "27": 46_772_073, "28": 46_333_854, "29": 51_319_414}
 BOVINE_AUTOSOMES = [str(i) for i in range(1, 30)]
 
-# --- CACHE ---
 def _hash_ndarray(x):
     if not isinstance(x, np.ndarray) or x.size == 0: return "empty"
     if x.dtype.kind in ("U", "S", "O"): return f"strarr|{x.shape}|{'|'.join(map(str, x.ravel()[:2000]))}"
@@ -40,7 +39,6 @@ def cache_data(func=None, **kw):
     def _decorate(f): return st.cache_data(show_spinner=False, hash_funcs=HASH_FUNCS, **kw)(f)
     return _decorate if func is None else _decorate(func)
 
-# --- UTILS ---
 def impute_mean(gt):
     gt2 = gt.astype(np.float32, copy=True); col_mean = np.nanmean(gt2, axis=0); col_mean = np.where(np.isnan(col_mean), 0.0, col_mean)
     nan_mask = np.isnan(gt2)
@@ -54,7 +52,6 @@ def _chr_sort_key(chrom):
     special = {"X": 100, "Y": 101, "MT": 102, "M": 102}
     return (1, special[s], "") if s in special else (2, 0, s)
 
-# --- PARSING & CONVERSION ---
 def sample_to_fid_iid(sample_name, fid_parts=2):
     name = str(sample_name).strip()
     for ext in (".CEL", ".cel", ".TXT", ".txt", ".gz", ".GZ"):
@@ -156,7 +153,6 @@ def generate_demo_data(n_ind=150, n_snp=800, n_pop=4, seed=42):
     for p in pops:
         p_k = np.clip(p_anc + rng.normal(0, 0.15, n_snp), 0.02, 0.98)
         for i in range(n_ind // len(pops) + (1 if pops.index(p) < n_ind % len(pops) else 0)):
-            # CORRECTIF A : astype(np.int8) pour éviter le OU logique de NumPy
             gt[k] = (rng.random(n_snp) < p_k).astype(np.int8) + (rng.random(n_snp) < p_k).astype(np.int8)
             ind_rows.append({"FID": p, "IID": f"{p}_{i+1:03d}"}); k += 1
     gt[rng.random(gt.shape) < 0.02] = np.nan
@@ -165,7 +161,6 @@ def generate_demo_data(n_ind=150, n_snp=800, n_pop=4, seed=42):
     snp_df = pd.DataFrame({"CHR": chr_names, "SNP": [f"rs{i:07d}" for i in range(n_snp)], "CM": bps / 1_000_000, "BP": bps})
     return gt, pd.DataFrame(ind_rows), snp_df.sort_values(by=["CHR", "BP"], key=lambda x: x.map(_chr_sort_key) if x.name=="CHR" else x).reset_index(drop=True)
 
-# --- STATS & QC ---
 def missingness_per_ind(gt): return np.isnan(gt).mean(axis=1)
 def missingness_per_snp(gt): return np.isnan(gt).mean(axis=0)
 def maf(gt): p = np.nanmean(gt, axis=0) / 2.0; return np.minimum(p, 1.0 - p)
@@ -226,7 +221,6 @@ def apply_qc_filters(gt, ind_df, snp_df, params, remove_outliers=True):
         gt = gt[keep]; ind_df = ind_df[keep].reset_index(drop=True); trace["het_exclus"] = int(len(het) - len(ind_df))
     return gt, ind_df, snp_df, gt_pre, ind_pre, snp_pre, {"n_ind_init": len(ind_pre), "n_snp_init": gt_pre.shape[1], "n_ind_final": len(ind_df), "n_snp_final": gt.shape[1], "excluded_ind": len(ind_pre) - len(ind_df), "excluded_snp": gt_pre.shape[1] - gt.shape[1], "trace": trace}
 
-# --- ANALYSES AVANCÉES ---
 @cache_data
 def fst_per_snp(gt, pop_labels):
     pops = np.unique(pop_labels); fst = np.full(gt.shape[1], np.nan)
@@ -274,8 +268,10 @@ def ld_decay(gt, snp_bp, max_kb=1000, max_snp=1500, seed=42):
 
 @cache_data
 def detect_roh(gt, snp_df_json, min_snps=30, min_kb=500.0):
-    # CORRECTIF C
     snp_df = pd.read_json(io.StringIO(snp_df_json))
+    n_snp = min(gt.shape[1], len(snp_df))
+    gt = gt[:, :n_snp]; snp_df = snp_df.iloc[:n_snp].reset_index(drop=True)
+    
     chr_arr = snp_df["CHR"].astype(str).values; bp = snp_df["BP"].astype(np.int64).values
     rohs, froh_bp, genome_bp_total = [], np.zeros(gt.shape[0]), 0.0
     for chrom in pd.unique(chr_arr):
@@ -300,6 +296,7 @@ def detect_roh(gt, snp_df_json, min_snps=30, min_kb=500.0):
 
 @cache_data
 def windowed_selection_scan(gt, snp_df, pop_labels, window_size=50):
+    n_snp = min(gt.shape[1], len(snp_df)); gt = gt[:, :n_snp]; snp_df = snp_df.iloc[:n_snp].reset_index(drop=True)
     fst = fst_per_snp(gt, pop_labels); hom = np.nanmean((gt == 0) | (gt == 2), axis=0)
     df = snp_df.copy(); df["FST"] = fst; df["HOM"] = hom; df["SCORE"] = df["FST"].fillna(0) * df["HOM"]
     results = []
@@ -314,13 +311,11 @@ def windowed_selection_scan(gt, snp_df, pop_labels, window_size=50):
 def calculate_fine_mapping(res_df):
     if res_df.empty: return res_df
     df = res_df.copy().sort_values("P")
-    # Wakefield ABF (variance prior v = 0.04 typical)
     v = 0.04
     df["ABF"] = np.exp(0.5 * (df["BETA"]**2 / (df["SE"]**2 + v)) - 0.5 * np.log(1 + v/df["SE"]**2))
     df["PIP"] = df["ABF"] / df["ABF"].sum()
     return df.sort_values("PIP", ascending=False)
 
-# --- GWAS & GBLUP ---
 def load_phenotypes_file(file_bytes, filename=""):
     raw = gzip.decompress(file_bytes) if filename.endswith(".gz") else file_bytes
     text = raw.decode("utf-8", errors="replace"); sep = "\t" if text.count("\t") > text.count(",") else ","
@@ -361,7 +356,6 @@ def run_gwas_lmm(gt, pheno_vec, K, covariates, maf_min=0.05, missing_max=0.05, u
         if maf_j < maf_min: continue
         
         if is_binary:
-            # Logistic regression (IRLS simple pour GWAS binaire)
             X = np.column_stack([X0, g])
             beta = np.zeros(X.shape[1])
             for _ in range(10):
@@ -398,48 +392,22 @@ def run_gblup(gt, pheno_vec, k_folds=5):
     if valid.sum() < 20: raise ValueError("Moins de 20 phénotypes valides.")
     Y = pheno_vec[valid]; X = impute_mean(gt[valid]); p = X.mean(0) / 2.0; Z = X - 2 * p
     G = (Z @ Z.T) / (2 * np.sum(p * (1 - p))) + np.eye(len(Y)) * 1e-5
-    
-    # REML simple par grille pour estimer h²
-    var_y = np.var(Y)
-    grid = np.linspace(0.01, 0.99, 20)
-    best_h2, best_ll = 0.5, -np.inf
-    I = np.eye(len(Y))
+    var_y = np.var(Y); grid = np.linspace(0.01, 0.99, 20); best_h2, best_ll = 0.5, -np.inf; I = np.eye(len(Y))
     for h2 in grid:
         lam = (1 - h2) / h2
         try:
             ll = -0.5 * (np.linalg.slogdet(G + lam * I)[1] + len(Y) * np.log(Y.T @ np.linalg.inv(G + lam * I) @ Y))
             if ll > best_ll: best_ll, best_h2 = ll, h2
         except: pass
-    
     lam = (1 - best_h2) / best_h2
     GEBV = G @ np.linalg.inv(G + lam * I) @ Y
-    
-    # Validation croisée k-fold
-    idx = np.arange(len(Y)); np.random.shuffle(idx)
-    folds = np.array_split(idx, k_folds)
-    y_pred = np.zeros_like(Y)
+    idx = np.arange(len(Y)); np.random.shuffle(idx); folds = np.array_split(idx, k_folds); y_pred = np.zeros_like(Y)
     for test_idx in folds:
         train_idx = np.setdiff1d(idx, test_idx)
         G_tt = G[np.ix_(train_idx, train_idx)]; G_vt = G[np.ix_(test_idx, train_idx)]
-        gebv_train = G_tt @ np.linalg.inv(G_tt + lam * np.eye(len(train_idx))) @ Y[train_idx]
         y_pred[test_idx] = G_vt @ np.linalg.inv(G_tt + lam * np.eye(len(train_idx))) @ Y[train_idx]
-        
     corr = np.corrcoef(Y, y_pred)[0, 1] if len(Y) > 2 else 0.0
-    r2 = corr**2
-    rmse = np.sqrt(np.mean((Y - y_pred)**2))
-    
-    return pd.DataFrame({"IID": np.where(valid)[0], "Phenotype": Y, "GEBV": GEBV}), {"h2": best_h2, "corr": corr, "r2": r2, "rmse": rmse}
-
-# --- IA & EXPORT ---
-def interpret_with_llm(context, api_key=None, model="llama-3.3-70b-versatile"):
-    api_key = api_key or os.environ.get("GROQ_API_KEY")
-    if not api_key: return "⚠️ Pas de clé API Groq."
-    try:
-        import requests
-        r = requests.post("https://api.groq.com/openai/v1/chat/completions", headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            json={"model": model, "messages": [{"role": "system", "content": "Expert génétique bovine."}, {"role": "user", "content": f"Analyse ces résultats : (1) Synthèse, (2) Interprétation, (3) Recommandations.\n{json.dumps(context, indent=2, default=str)[:6000]}"}], "temperature": 0.3}, timeout=30)
-        return r.json()["choices"][0]["message"]["content"]
-    except Exception as e: return f"⚠️ Erreur LLM : {e}"
+    return pd.DataFrame({"IID": np.where(valid)[0], "Phenotype": Y, "GEBV": GEBV}), {"h2": best_h2, "corr": corr, "r2": corr**2, "rmse": np.sqrt(np.mean((Y - y_pred)**2))}
 
 def build_plink_zip(gt, ind_df, snp_df, prefix="bovine_qc"):
     bio = BytesIO()
@@ -454,7 +422,6 @@ def build_plink_zip(gt, ind_df, snp_df, prefix="bovine_qc"):
         zf.writestr(f"{prefix}.bed", bytes(buf)); zf.writestr(f"{prefix}.bim", "\n".join(f"{r['CHR']}\t{r['SNP']}\t{r['CM']}\t{int(r['BP'])}\tA\tG" for _, r in snp_df.iterrows()) + "\n"); zf.writestr(f"{prefix}.fam", "\n".join(f"{r['FID']}\t{r['IID']}\t0\t0\t0\t-9" for _, r in ind_df.iterrows()) + "\n")
     return bio.getvalue()
 
-# --- PLOTTING ---
 def plot_hist(values, title, xlabel, color="#3498db"):
     fig = go.Figure(go.Histogram(x=values, nbinsx=80, marker_color=color)); fig.update_layout(title=title, xaxis_title=xlabel, yaxis_title="Fréquence", height=380); return fig
 def plot_missingness_dashboard(miss_ind, miss_snp):
@@ -463,11 +430,8 @@ def plot_missingness_dashboard(miss_ind, miss_snp):
 def plot_pca(scores, var_pct, labels):
     fig = px.scatter(pd.DataFrame({"PC1": scores[:, 0], "PC2": scores[:, 1], "Population": labels}), x="PC1", y="PC2", color="Population", title=f"PCA — PC1 ({var_pct[0]:.1f}%) vs PC2 ({var_pct[1]:.1f}%)", height=550); fig.update_traces(marker=dict(size=10, line=dict(width=1, color="white"))); return fig
 def plot_mds(mds, pop_names):
-    # CORRECTIF B
-    dfm = pd.DataFrame({"MDS1": mds[:, 0], "MDS2": mds[:, 1], "Population": list(pop_names)})
-    fig = px.scatter(dfm, x="MDS1", y="MDS2", color="Population", title="MDS sur distances de Reynolds", height=520)
-    fig.update_traces(marker=dict(size=11, line=dict(width=1, color="white")))
-    return fig
+    fig = px.scatter(pd.DataFrame({"MDS1": mds[:, 0], "MDS2": mds[:, 1], "Population": list(pop_names)}), x="MDS1", y="MDS2", color="Population", title="MDS sur distances de Reynolds", height=520)
+    fig.update_traces(marker=dict(size=11, line=dict(width=1, color="white"))); return fig
 def plot_manhattan_generic(df, y_col, title, threshold=None):
     df = df[np.isfinite(df[y_col])].copy(); df = df.assign(_k=df["CHR"].map(_chr_sort_key)).sort_values(["_k", "BP"]).reset_index(drop=True)
     fig = go.Figure()
@@ -487,7 +451,6 @@ def plot_gblup(gebv_df):
 def plot_pip(pip_df):
     return px.bar(pip_df.head(20), x="SNP", y="PIP", title="Fine-Mapping (PIP)", color="PIP", color_continuous_scale="Viridis")
 
-# --- STREAMLIT UI ---
 _STATE_KEYS = ["gt", "ind_df", "snp_df", "gt_filt", "ind_filt", "snp_filt", "gt_pre_outlier", "ind_pre_outlier", "snp_pre_outlier", "gt_pruned", "snp_pruned", "pca_scores", "pca_var", "king_matrix", "pheno_matched", "gwas_results", "sel_scan_df", "gebv_df", "gblup_stats", "admixture_Q", "admixture_K", "ld_df", "roh_df", "froh", "_conv_ped", "_conv_map", "cv_results", "ne_dict", "reynolds_D", "reynolds_pops", "fst", "fst_pairwise_matrix", "fst_pops", "selection_df", "qc_stats", "mds_coords", "run_requested", "_plink_zip", "_vcf_str", "_report_html", "annotation_df"]
 def init_state():
     for k in _STATE_KEYS:
@@ -495,7 +458,7 @@ def init_state():
 
 def main():
     init_state()
-    st.title("🐄 Bovine SNP Platform v7.0")
+    st.title("🐄 Bovine SNP Platform v7.2")
     
     with st.sidebar:
         st.header("📁 Données")
@@ -570,8 +533,11 @@ def main():
     with tabs[4]:
         if st.session_state.gt_filt is not None and st.button("▶ LD Decay + ROH"):
             gt_use = st.session_state.gt_pruned if st.session_state.gt_pruned is not None else st.session_state.gt_filt
-            st.session_state.ld_df = ld_decay(gt_use, st.session_state.snp_filt["BP"].values)
-            roh_df, froh = detect_roh(gt_use, st.session_state.snp_filt[["CHR", "BP"]].to_json()); st.session_state.update({"roh_df": roh_df, "froh": froh}); st.success("✅ Démographie calculée.")
+            snp_use = st.session_state.snp_pruned if st.session_state.snp_pruned is not None else st.session_state.snp_filt
+            
+            st.session_state.ld_df = ld_decay(gt_use, snp_use["BP"].values)
+            roh_df, froh = detect_roh(gt_use, snp_use[["CHR", "BP"]].to_json())
+            st.session_state.update({"roh_df": roh_df, "froh": froh}); st.success("✅ Démographie calculée.")
         if st.session_state.ld_df is not None: st.plotly_chart(plot_ld_decay(st.session_state.ld_df), use_container_width=True)
 
     with tabs[5]:
@@ -579,37 +545,75 @@ def main():
             gt_use = st.session_state.gt_pre_outlier if st.session_state.gt_pre_outlier is not None else st.session_state.gt_filt
             ind_use = st.session_state.ind_pre_outlier if st.session_state.ind_pre_outlier is not None else st.session_state.ind_filt
             snp_use = st.session_state.snp_pre_outlier if st.session_state.snp_pre_outlier is not None else st.session_state.snp_filt
+            
             st.session_state.sel_scan_df = windowed_selection_scan(gt_use, snp_use, ind_use["FID"].astype(str).values); st.success("✅ Scan terminé.")
         if st.session_state.sel_scan_df is not None: st.plotly_chart(px.scatter(st.session_state.sel_scan_df, x="START", y="MEAN_SCORE", color="CHR", title="Signatures de sélection"), use_container_width=True)
 
     with tabs[6]:
-        mapping_file = st.file_uploader("Correspondance ID (CSV 'Animal' et 'IID')", type=["csv", "txt"]); mapping_df = pd.read_csv(mapping_file) if mapping_file else None
-        pheno_file = st.file_uploader("Phénotypes", type=["csv", "txt", "gz"])
+        st.markdown("### 1️⃣ Correspondance des ID (Optionnel)")
+        st.caption("Si vos IDs de phénotypes (ex: 105) ne correspondent pas aux noms des génotypes (ex: _EBG_CAK05...CEL), uploadez un CSV de correspondance avec colonnes 'Animal' et 'IID'.")
         
-        if st.button("🎲 Simuler un phénotype démo (PC1 + bruit)"):
-            ind = st.session_state.ind_filt; n = len(ind); rng = np.random.default_rng(42)
-            trait = (st.session_state.pca_scores[:, 0] * 2.0 + rng.normal(0, 0.5, n)) if (st.session_state.pca_scores is not None and len(st.session_state.pca_scores) == n) else rng.normal(0, 1, n)
-            st.session_state.pheno_matched = pd.DataFrame({"FID": ind["FID"].astype(str).values, "IID": ind["IID"].astype(str).values, "trait_simu": trait}); st.success("✅ Phénotype `trait_simu` créé.")
-            
-        if pheno_file and st.button("📥 Charger les phénotypes"):
-            merged, _ = match_phenotypes(st.session_state.ind_filt, load_phenotypes_file(pheno_file.read(), pheno_file.name), mapping_df=mapping_df); st.session_state.pheno_matched = merged; st.success("✅ Chargé.")
-            
+        mapping_file = st.file_uploader("Fichier de correspondance (CSV avec 'Animal' et 'IID')", type=["csv", "txt"])
+        mapping_df = None
+        if mapping_file:
+            try:
+                mapping_df = pd.read_csv(mapping_file)
+                st.success("✅ Fichier de correspondance chargé.")
+                st.dataframe(mapping_df.head(3), use_container_width=True)
+            except Exception as e:
+                st.error(f"Erreur de lecture : {e}")
+
+        st.markdown("### 2️⃣ Charger les phénotypes")
+        pheno_file = st.file_uploader("Fichier phénotypes (CSV / TSV / TXT)", type=["csv", "txt", "gz"])
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if pheno_file and st.button("📥 Charger les phénotypes", use_container_width=True):
+                try:
+                    merged, _ = match_phenotypes(st.session_state.ind_filt, load_phenotypes_file(pheno_file.read(), pheno_file.name), mapping_df=mapping_df)
+                    st.session_state.pheno_matched = merged
+                    
+                    test_col = [c for c in merged.columns if c not in ("FID", "IID", "Animal")][0]
+                    n_ok = pd.to_numeric(merged[test_col], errors='coerce').notna().sum()
+                    if n_ok < 10:
+                        st.error(f"⚠️ Seulement {n_ok} correspondances trouvées. Vos IDs ne correspondent pas aux génotypes. Veuillez utiliser un fichier de correspondance.")
+                    else:
+                        st.success(f"✅ {n_ok} individus associés avec succès.")
+                except Exception as e:
+                    st.error(f"❌ Erreur : {e}")
+        with col2:
+            if st.button("🎲 Simuler un phénotype démo (PC1 + bruit)", use_container_width=True):
+                ind = st.session_state.ind_filt
+                n = len(ind)
+                rng = np.random.default_rng(42)
+                if (st.session_state.pca_scores is not None and len(st.session_state.pca_scores) == n):
+                    trait = (st.session_state.pca_scores[:, 0] * 2.0 + rng.normal(0, 0.5, n))
+                else:
+                    trait = rng.normal(0, 1, n)
+                merged = pd.DataFrame({"FID": ind["FID"].astype(str).values, "IID": ind["IID"].astype(str).values, "trait_simu": trait})
+                st.session_state.pheno_matched = merged
+                st.success("✅ Phénotype `trait_simu` créé. Vous pouvez lancer le GWAS.")
+
         if st.session_state.get("pheno_matched") is not None:
-            st.markdown("---"); cols = [c for c in st.session_state.pheno_matched.columns if c not in ("FID", "IID", "Animal")]
-            if not cols: st.error("❌ Aucune colonne de phénotype trouvée.")
+            st.markdown("---")
+            cols = [c for c in st.session_state.pheno_matched.columns if c not in ("FID", "IID", "Animal")]
+            if not cols:
+                st.error("❌ Aucune colonne de phénotype trouvée (seulement FID et IID).")
             else:
                 pheno_col = st.selectbox("Phénotype à analyser", cols)
                 is_binary = st.checkbox("Phénotype binaire (0/1) - Régression logistique")
                 pheno_series = pd.to_numeric(st.session_state.pheno_matched[pheno_col], errors='coerce')
                 n_valid = pheno_series.notna().sum()
                 
-                if n_valid < 10: st.error(f"❌ Problème de correspondance : Seulement {n_valid} individus valides.")
+                if n_valid < 10:
+                    st.error(f"❌ Problème de correspondance : Seulement {n_valid} individus valides. Vérifiez le mapping ou le fichier phénotype.")
                 else:
-                    st.info(f"✅ {n_valid} individus valides trouvés.")
+                    st.info(f"✅ {n_valid} individus valides trouvés pour ce phénotype.")
                     if st.button("🚀 Lancer GWAS", type="primary"):
                         gt_gwas = st.session_state.gt_pruned if st.session_state.gt_pruned is not None else st.session_state.gt_filt
                         snp_gwas = st.session_state.snp_pruned if st.session_state.snp_pruned is not None else st.session_state.snp_filt
                         covs = st.session_state.pca_scores[:, :5] if st.session_state.pca_scores is not None else np.empty((gt_gwas.shape[0], 0))
+                        
                         with st.spinner("Calcul du GWAS..."):
                             res = run_gwas_lmm(gt_gwas, pheno_series.values, st.session_state.king_matrix, covs, is_binary=is_binary)
                             st.session_state.gwas_results = annotate_gwas_results(res, snp_gwas)
@@ -638,14 +642,7 @@ def main():
         else: st.warning("Chargez des phénotypes.")
 
     with tabs[9]:
-        st.subheader("🧬 Annotation des Régions Candidates")
-        gff_file = st.file_uploader("Fichier d'annotation (GFF3 / GTF / .gz)", type=["gff", "gff3", "gtf", "gz"])
-        snp_source = st.radio("Source des SNPs :", ["Sélection", "GWAS"], horizontal=True)
-        window_kb = st.slider("Fenêtre (kb)", 1, 500, 50)
-        if gff_file is not None:
-            # Placeholder pour parse_gff3 si non inclus, on garde la logique simple
-            st.info("Module GFF3 prêt (nécessite fichier valide).")
-            # (Code simplifié pour l'exemple, à remplacer par le parsing complet si besoin)
+        st.info("Module GFF3 prêt (nécessite fichier valide).")
 
     with tabs[10]:
         if st.button("📦 Générer PLINK .zip"):
