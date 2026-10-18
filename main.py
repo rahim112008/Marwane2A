@@ -1,7 +1,5 @@
 """
-🐄 Bovine SNP Platform v6.2 (Intégrale et Fonctionnelle)
-Toutes les fonctionnalités : Axiom, QC, LD, Structure, Admixture, Démographie, 
-Sélection, GWAS, Post-GWAS, GBLUP, Annotation, Export, IA.
+🐄 Bovine SNP Platform v6.3 (Intégrale et Corrigée)
 """
 import gzip, io, json, os, warnings, zipfile
 from collections import Counter
@@ -20,7 +18,7 @@ from sklearn.decomposition import NMF, PCA
 from sklearn.manifold import MDS as SklearnMDS
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
-st.set_page_config(page_title="🐄 Bovine SNP Platform v6.2", page_icon="🐄", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="🐄 Bovine SNP Platform v6.3", page_icon="🐄", layout="wide", initial_sidebar_state="expanded")
 
 DEFAULT_THRESHOLDS = {"geno": 0.05, "mind": 0.05, "maf": 0.05, "hwe": 1e-6, "het_sd": 3.0, "king_cutoff": 0.354, "ld_r2": 0.2}
 HWE_EXACT_MAX_SNP = 20_000
@@ -411,7 +409,7 @@ def match_phenotypes(ind_df, pheno_df, iid_col=None, mapping_df=None):
 @cache_data
 def run_gwas_lmm(gt, pheno_vec, K, covariates, maf_min=0.05, missing_max=0.05, use_lmm=True):
     valid_ind = np.isfinite(pheno_vec)
-    if valid_ind.sum() < 10: raise ValueError("Moins de 10 individus avec phénotype valide.")
+    if valid_ind.sum() < 10: raise ValueError(f"Moins de 10 individus avec phénotype valide (seulement {valid_ind.sum()}). Vérifiez que les ID correspondent.")
     Y, gt_v, K_v = pheno_vec[valid_ind], gt[valid_ind], np.asarray(K)[np.ix_(valid_ind, valid_ind)]
     X0 = np.ones((len(Y), 1)) if covariates is None or covariates.size == 0 else np.column_stack([np.ones(len(Y)), np.asarray(covariates)[valid_ind]])
     X0 = X0[:, np.std(X0, axis=0) > 1e-10]
@@ -505,7 +503,7 @@ def init_state():
 
 def main():
     init_state()
-    st.title("🐄 Bovine SNP Platform v6.2")
+    st.title("🐄 Bovine SNP Platform v6.3")
     
     with st.sidebar:
         st.header("📁 Données")
@@ -603,17 +601,49 @@ def main():
     with tabs[6]:
         mapping_file = st.file_uploader("Correspondance ID (CSV 'Animal' et 'IID')", type=["csv", "txt"]); mapping_df = pd.read_csv(mapping_file) if mapping_file else None
         pheno_file = st.file_uploader("Phénotypes", type=["csv", "txt", "gz"])
-        if pheno_file and st.button("📥 Charger"):
+        
+        # --- BOUTON DE SIMULATION AJOUTÉ ---
+        if st.button("🎲 Simuler un phénotype démo (PC1 + bruit)"):
+            ind = st.session_state.ind_filt
+            n = len(ind)
+            rng = np.random.default_rng(42)
+            if (st.session_state.pca_scores is not None and len(st.session_state.pca_scores) == n):
+                trait = (st.session_state.pca_scores[:, 0] * 2.0 + rng.normal(0, 0.5, n))
+            else:
+                trait = rng.normal(0, 1, n)
+            merged = pd.DataFrame({"FID": ind["FID"].astype(str).values, "IID": ind["IID"].astype(str).values, "trait_simu": trait})
+            st.session_state.pheno_matched = merged
+            st.success("✅ Phénotype `trait_simu` créé.")
+            
+        if pheno_file and st.button("📥 Charger les phénotypes"):
             merged, _ = match_phenotypes(st.session_state.ind_filt, load_phenotypes_file(pheno_file.read(), pheno_file.name), mapping_df=mapping_df); st.session_state.pheno_matched = merged; st.success("✅ Chargé.")
+            
         if st.session_state.get("pheno_matched") is not None:
-            pheno_col = st.selectbox("Phénotype", [c for c in st.session_state.pheno_matched.columns if c not in ("FID", "IID", "Animal")])
-            if st.button("🚀 Lancer GWAS", type="primary"):
-                gt_gwas = st.session_state.gt_pruned if st.session_state.gt_pruned is not None else st.session_state.gt_filt
-                snp_gwas = st.session_state.snp_pruned if st.session_state.snp_pruned is not None else st.session_state.snp_filt
-                covs = st.session_state.pca_scores[:, :5] if st.session_state.pca_scores is not None else np.empty((gt_gwas.shape[0], 0))
-                res = run_gwas_lmm(gt_gwas, st.session_state.pheno_matched[pheno_col].values, st.session_state.king_matrix, covs)
-                st.session_state.gwas_results = annotate_gwas_results(res, snp_gwas); st.success(f"✅ {len(res)} SNPs testés.")
-                st.plotly_chart(plot_manhattan_generic(st.session_state.gwas_results, "P", "GWAS Manhattan"), use_container_width=True)
+            st.markdown("---")
+            cols = [c for c in st.session_state.pheno_matched.columns if c not in ("FID", "IID", "Animal")]
+            if not cols:
+                st.error("❌ Aucune colonne de phénotype trouvée (seulement FID et IID).")
+            else:
+                pheno_col = st.selectbox("Phénotype à analyser", cols)
+                
+                # --- VÉRIFICATION CRUCIALE AVANT GWAS ---
+                pheno_series = pd.to_numeric(st.session_state.pheno_matched[pheno_col], errors='coerce')
+                n_valid = pheno_series.notna().sum()
+                
+                if n_valid < 10:
+                    st.error(f"❌ Problème de correspondance : Seulement **{n_valid}** individus ont un phénotype valide pour `{pheno_col}`. \n\n**Causes possibles :** \n1. Vos IDs (Animal) ne correspondent pas aux IID des génotypes. \n2. Utilisez le fichier de correspondance ci-dessus. \n3. La colonne contient du texte au lieu de chiffres.")
+                else:
+                    st.info(f"✅ {n_valid} individus valides trouvés pour ce phénotype.")
+                    if st.button("🚀 Lancer GWAS", type="primary"):
+                        gt_gwas = st.session_state.gt_pruned if st.session_state.gt_pruned is not None else st.session_state.gt_filt
+                        snp_gwas = st.session_state.snp_pruned if st.session_state.snp_pruned is not None else st.session_state.snp_filt
+                        covs = st.session_state.pca_scores[:, :5] if st.session_state.pca_scores is not None else np.empty((gt_gwas.shape[0], 0))
+                        
+                        with st.spinner("Calcul du GWAS en cours..."):
+                            res = run_gwas_lmm(gt_gwas, pheno_series.values, st.session_state.king_matrix, covs)
+                            st.session_state.gwas_results = annotate_gwas_results(res, snp_gwas)
+                        st.success(f"✅ {len(res)} SNPs testés.")
+                        st.plotly_chart(plot_manhattan_generic(st.session_state.gwas_results, "P", "GWAS Manhattan"), use_container_width=True)
 
     with tabs[7]:
         if st.session_state.gwas_results is not None:
@@ -622,10 +652,12 @@ def main():
 
     with tabs[8]:
         if st.session_state.get("pheno_matched") is not None:
-            pheno_col = st.selectbox("Phénotype pour GBLUP", [c for c in st.session_state.pheno_matched.columns if c not in ("FID", "IID", "Animal")], key="gb_pheno")
+            cols = [c for c in st.session_state.pheno_matched.columns if c not in ("FID", "IID", "Animal")]
+            pheno_col = st.selectbox("Phénotype pour GBLUP", cols, key="gb_pheno")
             if st.button("▶ Calculer GEBV"):
                 gt_use = st.session_state.gt_pruned if st.session_state.gt_pruned is not None else st.session_state.gt_filt
-                st.session_state.gebv_df = run_gblup(gt_use, st.session_state.pheno_matched[pheno_col].values); st.success("✅ GEBV calculés.")
+                pheno_series = pd.to_numeric(st.session_state.pheno_matched[pheno_col], errors='coerce')
+                st.session_state.gebv_df = run_gblup(gt_use, pheno_series.values); st.success("✅ GEBV calculés.")
             if st.session_state.gebv_df is not None: st.plotly_chart(plot_gblup(st.session_state.gebv_df), use_container_width=True)
         else: st.warning("Chargez des phénotypes.")
 
